@@ -1,0 +1,585 @@
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/lib/supabase';
+import { useTeamSession } from '@/contexts/TeamSessionContext';
+import { Button, Spinner, ConfirmDialog } from '@/components/ui';
+import { useProctoring } from '@/hooks/useProctoring';
+import type { ParticipantQuestion, OptionLetter, Quiz, QuizAttempt } from '@/lib/types';
+import { getRemainingSeconds, formatTime, seededShuffle, shuffleOptions } from '@/lib/utils';
+import { ChevronLeft, ChevronRight, Send, Clock, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
+
+export default function QuizPage() {
+  const { session } = useTeamSession();
+  const navigate = useNavigate();
+
+  const [quiz, setQuiz] = useState<Quiz | null>(null);
+  const [attempt, setAttempt] = useState<QuizAttempt | null>(null);
+  const [questions, setQuestions] = useState<ParticipantQuestion[]>([]);
+  const [answers, setAnswers] = useState<Map<string, OptionLetter | null>>(new Map());
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [warningMessage, setWarningMessage] = useState('');
+
+  const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const pendingSaves = useRef<Map<string, OptionLetter | null>>(new Map());
+  const expiresAtRef = useRef<string>('');
+  const attemptIdRef = useRef<string>('');
+
+  // Proctoring
+  const { violationCount } = useProctoring(
+    attemptIdRef.current,
+    session?.teamId || '',
+    quiz?.proctoring_enabled ?? false,
+    (message: string) => {
+      setWarningMessage(message);
+      setTimeout(() => setWarningMessage(''), 4000);
+    }
+  );
+
+  // =====================================================
+  // INITIALIZATION
+  // =====================================================
+
+  useEffect(() => {
+    if (!session?.teamId) {
+      navigate('/quiz/login');
+      return;
+    }
+    initQuiz();
+
+    return () => {
+      clearInterval(timerRef.current);
+      clearInterval(heartbeatRef.current);
+    };
+  }, []);
+
+  async function initQuiz() {
+    try {
+      // Get quiz
+      const { data: quizData } = await supabase
+        .from('quizzes')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!quizData) {
+        navigate('/quiz/login');
+        return;
+      }
+      setQuiz(quizData);
+
+      // Get or resume attempt
+      let attemptData: QuizAttempt | null = null;
+
+      // Check for existing active attempt
+      const { data: existing } = await supabase
+        .from('quiz_attempts')
+        .select('*')
+        .eq('quiz_id', quizData.id)
+        .eq('team_id', session!.teamId)
+        .eq('status', 'in_progress')
+        .single();
+
+      if (existing) {
+        attemptData = existing;
+      } else {
+        // Check if already submitted
+        const { data: submittedAttempt } = await supabase
+          .from('quiz_attempts')
+          .select('*')
+          .eq('quiz_id', quizData.id)
+          .eq('team_id', session!.teamId)
+          .in('status', ['submitted', 'auto_submitted'])
+          .order('attempt_number', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (submittedAttempt) {
+          navigate('/quiz/result');
+          return;
+        }
+
+        // Start new attempt
+        const { data: startResult } = await supabase.rpc('start_quiz_attempt', {
+          p_quiz_id: quizData.id,
+          p_team_id: session!.teamId,
+          p_session_token: session!.sessionToken,
+        });
+
+        const result = typeof startResult === 'string' ? JSON.parse(startResult) : startResult;
+        if (result.error) {
+          navigate('/quiz/login');
+          return;
+        }
+
+        const { data: newAttempt } = await supabase
+          .from('quiz_attempts')
+          .select('*')
+          .eq('id', result.attempt_id)
+          .single();
+
+        attemptData = newAttempt;
+      }
+
+      if (!attemptData) {
+        navigate('/quiz/login');
+        return;
+      }
+
+      setAttempt(attemptData);
+      attemptIdRef.current = attemptData.id;
+      expiresAtRef.current = attemptData.expires_at;
+
+      // Get questions (without correct answers)
+      const { data: questionsResult } = await supabase.rpc('get_quiz_questions', {
+        p_quiz_id: quizData.id,
+      });
+
+      let qs: ParticipantQuestion[] = typeof questionsResult === 'string'
+        ? JSON.parse(questionsResult)
+        : questionsResult || [];
+
+      // Randomize questions if enabled
+      if (quizData.randomize_questions) {
+        qs = seededShuffle(qs, attemptData.question_seed);
+      }
+
+      setQuestions(qs);
+
+      // Restore saved answers
+      const { data: savedAnswers } = await supabase
+        .from('answers')
+        .select('*')
+        .eq('attempt_id', attemptData.id);
+
+      const answerMap = new Map<string, OptionLetter | null>();
+      (savedAnswers || []).forEach(a => {
+        answerMap.set(a.question_id, a.selected_option as OptionLetter | null);
+      });
+      setAnswers(answerMap);
+
+      // Start timer
+      const remaining = getRemainingSeconds(attemptData.expires_at);
+      setTimeRemaining(remaining);
+
+      if (remaining <= 0) {
+        // Time already expired, auto-submit
+        await handleAutoSubmit();
+        return;
+      }
+
+      startTimer();
+      startHeartbeat();
+      setLoading(false);
+
+    } catch (err) {
+      console.error('Init error:', err);
+      navigate('/quiz/login');
+    }
+  }
+
+  // =====================================================
+  // TIMER
+  // =====================================================
+
+  function startTimer() {
+    timerRef.current = setInterval(() => {
+      const remaining = getRemainingSeconds(expiresAtRef.current);
+      setTimeRemaining(remaining);
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        handleAutoSubmit();
+      }
+    }, 1000);
+  }
+
+  // =====================================================
+  // HEARTBEAT (every 30s)
+  // =====================================================
+
+  function startHeartbeat() {
+    heartbeatRef.current = setInterval(async () => {
+      if (attemptIdRef.current) {
+        await supabase
+          .from('quiz_attempts')
+          .update({ last_heartbeat: new Date().toISOString() })
+          .eq('id', attemptIdRef.current);
+      }
+    }, 30000);
+  }
+
+  // =====================================================
+  // ANSWER SELECTION & AUTOSAVE
+  // =====================================================
+
+  const saveAnswer = useCallback(async (questionId: string, option: OptionLetter | null) => {
+    if (!attemptIdRef.current) return;
+
+    try {
+      const { error } = await supabase
+        .from('answers')
+        .upsert({
+          attempt_id: attemptIdRef.current,
+          question_id: questionId,
+          selected_option: option,
+          answered_at: new Date().toISOString(),
+        }, {
+          onConflict: 'attempt_id,question_id',
+        });
+
+      if (error) {
+        // Queue for retry
+        pendingSaves.current.set(questionId, option);
+      } else {
+        pendingSaves.current.delete(questionId);
+      }
+    } catch {
+      pendingSaves.current.set(questionId, option);
+    }
+  }, []);
+
+  function handleSelectOption(option: OptionLetter) {
+    const q = questions[currentIndex];
+    if (!q) return;
+
+    const currentAnswer = answers.get(q.id);
+    const newAnswer = currentAnswer === option ? null : option; // Toggle deselect
+
+    setAnswers(prev => {
+      const next = new Map(prev);
+      if (newAnswer === null) {
+        next.delete(q.id);
+      } else {
+        next.set(q.id, newAnswer);
+      }
+      return next;
+    });
+
+    saveAnswer(q.id, newAnswer);
+  }
+
+  // =====================================================
+  // NETWORK RECOVERY
+  // =====================================================
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setOnline(true);
+      setReconnecting(true);
+      // Sync pending saves
+      syncPendingAnswers().then(() => setReconnecting(false));
+    };
+    const handleOffline = () => setOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  async function syncPendingAnswers() {
+    for (const [qId, option] of pendingSaves.current) {
+      await saveAnswer(qId, option);
+    }
+  }
+
+  // =====================================================
+  // SUBMISSION
+  // =====================================================
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    setShowSubmitConfirm(false);
+
+    try {
+      // Sync any pending answers first
+      await syncPendingAnswers();
+
+      const { data, error } = await supabase.rpc('submit_attempt', {
+        p_attempt_id: attemptIdRef.current,
+        p_status: 'submitted',
+      });
+
+      if (error) throw error;
+
+      const result = typeof data === 'string' ? JSON.parse(data) : data;
+      if (result.error) throw new Error(result.error);
+
+      setSubmitted(true);
+      clearInterval(timerRef.current);
+      clearInterval(heartbeatRef.current);
+
+      // Exit fullscreen
+      try { document.exitFullscreen?.(); } catch {}
+
+      navigate('/quiz/result');
+    } catch (err: any) {
+      setSubmitting(false);
+      setWarningMessage('Failed to submit. Please try again.');
+    }
+  }
+
+  async function handleAutoSubmit() {
+    try {
+      await syncPendingAnswers();
+      await supabase.rpc('submit_attempt', {
+        p_attempt_id: attemptIdRef.current,
+        p_status: 'auto_submitted',
+      });
+    } catch {}
+    clearInterval(timerRef.current);
+    clearInterval(heartbeatRef.current);
+    try { document.exitFullscreen?.(); } catch {}
+    navigate('/quiz/result');
+  }
+
+  // =====================================================
+  // NAVIGATION
+  // =====================================================
+
+  function goToQuestion(index: number) {
+    if (index >= 0 && index < questions.length) {
+      setCurrentIndex(index);
+    }
+  }
+
+  // =====================================================
+  // RENDER
+  // =====================================================
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <Spinner size="lg" />
+          <p className="mt-4 text-gray-500">Loading quiz...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const currentQuestion = questions[currentIndex];
+  const currentAnswer = currentQuestion ? answers.get(currentQuestion.id) : null;
+  const answeredCount = answers.size;
+  const unansweredCount = questions.length - answeredCount;
+  const isTimeLow = timeRemaining < 300;
+  const isTimeCritical = timeRemaining < 60;
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold text-indigo-600">DejaVu</h1>
+          <span className="text-sm text-gray-500">{session?.teamName}</span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          {/* Network status */}
+          {!online && (
+            <div className="flex items-center gap-1 text-red-600 text-sm">
+              <WifiOff className="w-4 h-4" />
+              <span>Offline</span>
+            </div>
+          )}
+          {reconnecting && (
+            <div className="flex items-center gap-1 text-amber-600 text-sm">
+              <Wifi className="w-4 h-4 animate-pulse" />
+              <span>Reconnecting...</span>
+            </div>
+          )}
+
+          {/* Timer */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-lg font-bold ${
+            isTimeCritical
+              ? 'bg-red-100 text-red-700 animate-pulse'
+              : isTimeLow
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-gray-100 text-gray-900'
+          }`}>
+            <Clock className="w-4 h-4" />
+            {formatTime(timeRemaining)}
+          </div>
+        </div>
+      </header>
+
+      {/* Warning Banner */}
+      {warningMessage && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span className="text-sm text-amber-800">{warningMessage}</span>
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Question Navigation Palette */}
+        <aside className="w-48 bg-white border-r border-gray-200 p-4 overflow-y-auto hidden md:block">
+          <p className="text-xs text-gray-500 mb-3 font-medium">
+            Q {currentIndex + 1} of {questions.length}
+          </p>
+          <div className="grid grid-cols-5 gap-1.5">
+            {questions.map((q, i) => {
+              const isAnswered = answers.has(q.id);
+              const isCurrent = i === currentIndex;
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => goToQuestion(i)}
+                  className={`w-8 h-8 rounded-md text-xs font-medium transition-all ${
+                    isCurrent
+                      ? 'bg-indigo-600 text-white ring-2 ring-indigo-300'
+                      : isAnswered
+                        ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 space-y-1 text-xs text-gray-500">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded bg-emerald-100 border border-emerald-200" />
+              Answered ({answeredCount})
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded bg-gray-100 border border-gray-200" />
+              Unanswered ({unansweredCount})
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded bg-indigo-600" />
+              Current
+            </div>
+          </div>
+        </aside>
+
+        {/* Question Area */}
+        <main className="flex-1 p-6 overflow-y-auto">
+          <div className="max-w-2xl mx-auto">
+            {/* Mobile palette toggle */}
+            <div className="flex flex-wrap gap-1.5 mb-4 md:hidden">
+              {questions.map((q, i) => {
+                const isAnswered = answers.has(q.id);
+                const isCurrent = i === currentIndex;
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => goToQuestion(i)}
+                    className={`w-7 h-7 rounded text-xs font-medium ${
+                      isCurrent
+                        ? 'bg-indigo-600 text-white'
+                        : isAnswered
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Question */}
+            {currentQuestion && (
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full text-xs font-medium">
+                    Question {currentIndex + 1} / {questions.length}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {currentQuestion.marks} mark{currentQuestion.marks !== 1 ? 's' : ''}
+                    {currentQuestion.negative_marks > 0 && ` · -${currentQuestion.negative_marks} negative`}
+                  </span>
+                </div>
+
+                <h2 className="text-lg font-medium text-gray-900 mb-6 leading-relaxed">
+                  {currentQuestion.question_text}
+                </h2>
+
+                <div className="space-y-3">
+                  {(['A', 'B', 'C', 'D'] as OptionLetter[]).map(opt => {
+                    const optKey = `option_${opt.toLowerCase()}` as keyof ParticipantQuestion;
+                    const text = currentQuestion[optKey] as string;
+                    const isSelected = currentAnswer === opt;
+
+                    return (
+                      <button
+                        key={opt}
+                        onClick={() => handleSelectOption(opt)}
+                        className={`w-full text-left px-5 py-4 rounded-xl border-2 transition-all duration-150 ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-900'
+                            : 'border-gray-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/30 text-gray-700'
+                        }`}
+                      >
+                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-medium mr-3 ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {opt}
+                        </span>
+                        {text}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Navigation */}
+            <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-100">
+              <Button
+                variant="secondary"
+                onClick={() => goToQuestion(currentIndex - 1)}
+                disabled={currentIndex === 0 || !quiz?.allow_previous_question}
+              >
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Previous
+              </Button>
+
+              {currentIndex < questions.length - 1 ? (
+                <Button onClick={() => goToQuestion(currentIndex + 1)}>
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              ) : (
+                <Button
+                  variant="success"
+                  onClick={() => setShowSubmitConfirm(true)}
+                  loading={submitting}
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  Submit Quiz
+                </Button>
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
+
+      {/* Submit Confirmation */}
+      <ConfirmDialog
+        open={showSubmitConfirm}
+        onClose={() => setShowSubmitConfirm(false)}
+        onConfirm={handleSubmit}
+        title="Submit Quiz"
+        message={`You have answered ${answeredCount} of ${questions.length} questions. ${unansweredCount > 0 ? `${unansweredCount} question(s) are unanswered. ` : ''}Are you sure you want to submit?`}
+        confirmText="Submit"
+        loading={submitting}
+      />
+    </div>
+  );
+}
