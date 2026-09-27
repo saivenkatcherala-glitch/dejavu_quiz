@@ -124,8 +124,17 @@ export default function QuizLogin() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex flex-col justify-between items-center px-4 py-6">
+      <div className="w-full max-w-4xl flex justify-end">
+        <button
+          onClick={() => navigate('/admin/login')}
+          className="text-sm font-medium text-indigo-600 hover:text-indigo-800 bg-white border border-indigo-200 px-4 py-2 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
+        >
+          🔐 Admin Portal
+        </button>
+      </div>
+
+      <div className="w-full max-w-md my-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-extrabold text-indigo-600 tracking-tight">DejaVu</h1>
           <p className="text-gray-500 mt-2">Online Proctored Quiz</p>

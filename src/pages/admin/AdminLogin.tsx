@@ -28,8 +28,17 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-slate-50 flex flex-col justify-between items-center px-4 py-6">
+      <div className="w-full max-w-4xl flex justify-end">
+        <button
+          onClick={() => navigate('/quiz/login')}
+          className="text-sm font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-4 py-2 rounded-full shadow-sm hover:shadow transition-all flex items-center gap-1.5"
+        >
+          🎓 Participant Portal
+        </button>
+      </div>
+
+      <div className="w-full max-w-md my-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-indigo-600">DejaVu</h1>
           <p className="text-gray-500 mt-2">Admin Panel</p>
