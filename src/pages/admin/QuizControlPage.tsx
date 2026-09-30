@@ -31,51 +31,75 @@ export default function QuizControlPage() {
     proctoring_enabled: true,
   });
 
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [selectedQuizId, setSelectedQuizId] = useState<string>('');
+  const [newQuizTitle, setNewQuizTitle] = useState('');
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+
   useEffect(() => {
-    loadQuiz();
+    loadQuizzes();
   }, []);
 
-  async function loadQuiz() {
-    const { data } = await supabase
+  async function loadQuizzes() {
+    const { data: allQuizzes } = await supabase
       .from('quizzes')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+      .order('created_at', { ascending: false });
 
-    if (data) {
-      setQuiz(data);
+    setQuizzes(allQuizzes || []);
+    if (allQuizzes && allQuizzes.length > 0) {
+      const targetId = selectedQuizId || allQuizzes[0].id;
+      setSelectedQuizId(targetId);
+      loadQuizDetails(targetId, allQuizzes);
+    } else {
+      setLoading(false);
+    }
+  }
+
+  async function loadQuizDetails(qId: string, quizList?: Quiz[]) {
+    const list = quizList || quizzes;
+    const target = list.find(q => q.id === qId) || list[0];
+
+    if (target) {
+      setQuiz(target);
       setForm({
-        title: data.title,
-        description: data.description || '',
-        duration_seconds: data.duration_seconds,
-        default_allowed_attempts: data.default_allowed_attempts,
-        negative_marking_enabled: data.negative_marking_enabled,
-        negative_mark_value: data.negative_mark_value,
-        randomize_questions: data.randomize_questions,
-        randomize_options: data.randomize_options,
-        show_score_after_submit: data.show_score_after_submit,
-        show_correct_answers_after_submit: data.show_correct_answers_after_submit,
-        allow_previous_question: data.allow_previous_question,
-        auto_submit_on_expiry: data.auto_submit_on_expiry,
-        proctoring_enabled: data.proctoring_enabled,
+        title: target.title,
+        description: target.description || '',
+        duration_seconds: target.duration_seconds,
+        default_allowed_attempts: target.default_allowed_attempts,
+        negative_marking_enabled: target.negative_marking_enabled,
+        negative_mark_value: target.negative_mark_value,
+        randomize_questions: target.randomize_questions,
+        randomize_options: target.randomize_options,
+        show_score_after_submit: target.show_score_after_submit,
+        show_correct_answers_after_submit: target.show_correct_answers_after_submit,
+        allow_previous_question: target.allow_previous_question,
+        auto_submit_on_expiry: target.auto_submit_on_expiry,
+        proctoring_enabled: target.proctoring_enabled,
       });
 
       const { count } = await supabase
         .from('questions')
         .select('*', { count: 'exact', head: true })
-        .eq('quiz_id', data.id);
+        .eq('quiz_id', target.id);
       setQuestionCount(count || 0);
     }
     setLoading(false);
   }
 
+  function handleSelectQuiz(id: string) {
+    setSelectedQuizId(id);
+    loadQuizDetails(id);
+  }
+
   async function createQuiz() {
+    if (!newQuizTitle.trim()) return;
     setSaving(true);
     const { data, error } = await supabase
       .from('quizzes')
       .insert({
-        title: 'DejaVu',
+        title: newQuizTitle.trim(),
+        description: `Quiz section for ${newQuizTitle.trim()}`,
         status: 'DRAFT',
         duration_seconds: 1800,
         default_allowed_attempts: 1,
@@ -84,10 +108,12 @@ export default function QuizControlPage() {
       .single();
 
     if (data) {
-      setQuiz(data);
-      setToast({ message: 'Quiz created', type: 'success' });
+      setToast({ message: `Created quiz "${data.title}"`, type: 'success' });
       await logAction('Created quiz', 'quiz', data.id);
-      setEditMode(true);
+      setCreateModalOpen(false);
+      setNewQuizTitle('');
+      setSelectedQuizId(data.id);
+      loadQuizzes();
     } else {
       setToast({ message: error?.message || 'Failed to create quiz', type: 'error' });
     }
@@ -161,12 +187,36 @@ export default function QuizControlPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Quiz Control</h1>
-          <p className="text-gray-500 text-sm mt-1">{quiz.title}</p>
+          <p className="text-gray-500 text-sm mt-1">Managing: {quiz.title}</p>
         </div>
-        <Badge variant={quiz.status} className="text-base px-4 py-1">{quiz.status}</Badge>
+
+        <div className="flex items-center gap-3">
+          {/* Quiz Selector */}
+          {quizzes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">Select Quiz:</span>
+              <select
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                value={selectedQuizId}
+                onChange={e => handleSelectQuiz(e.target.value)}
+              >
+                {quizzes.map(q => (
+                  <option key={q.id} value={q.id}>
+                    {q.title} ({q.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <Button onClick={() => setCreateModalOpen(true)}>
+            + Create Quiz / Section
+          </Button>
+          <Badge variant={quiz.status} className="text-base px-4 py-1">{quiz.status}</Badge>
+        </div>
       </div>
 
       {/* Status Controls */}
@@ -292,6 +342,34 @@ export default function QuizControlPage() {
           ))}
         </div>
       </Card>
+
+      {/* Create New Quiz Modal */}
+      <Modal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        title="Create New Quiz / Section"
+        size="md"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Quiz / Theme Title (e.g. AGENTIC_AI, CYBERSECURITY, HEALTHCARE)"
+            placeholder="Enter section or theme name..."
+            value={newQuizTitle}
+            onChange={e => setNewQuizTitle(e.target.value)}
+            required
+            autoFocus
+          />
+          <p className="text-xs text-gray-500">
+            Teams with a matching theme will automatically be assigned to this quiz when they log in.
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setCreateModalOpen(false)}>Cancel</Button>
+            <Button onClick={createQuiz} loading={saving} disabled={!newQuizTitle.trim()}>
+              Create Quiz
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Confirm Dialog */}
       {confirm && (

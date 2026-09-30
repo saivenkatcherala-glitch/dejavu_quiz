@@ -15,11 +15,39 @@ export default function AttemptsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [confirm, setConfirm] = useState<{
     attemptId: string;
-    action: 'force_submit' | 'cancel';
-    title: string;
-    message: string;
-  } | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [clearAllConfirm, setClearAllConfirm] = useState(false);
+
+  async function handleDeleteAttempt(attemptId: string) {
+    setActionLoading(true);
+    try {
+      await supabase.from('violations').delete().eq('attempt_id', attemptId);
+      await supabase.from('quiz_attempts').delete().eq('id', attemptId);
+      setToast({ message: 'Attempt deleted', type: 'success' });
+      await logAction('Deleted attempt', 'attempt', attemptId);
+      loadAttempts();
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to delete attempt', type: 'error' });
+    } finally {
+      setActionLoading(false);
+      setConfirm(null);
+    }
+  }
+
+  async function handleClearAllAttempts() {
+    setActionLoading(true);
+    try {
+      await supabase.from('violations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('quiz_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      setToast({ message: 'All quiz attempts & history cleared', type: 'success' });
+      await logAction('Cleared all quiz history', 'attempts', 'all');
+      loadAttempts();
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to clear history', type: 'error' });
+    } finally {
+      setActionLoading(false);
+      setClearAllConfirm(false);
+    }
+  }
 
   useEffect(() => {
     loadAttempts();
@@ -118,6 +146,14 @@ export default function AttemptsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Attempts</h1>
           <p className="text-gray-500 text-sm mt-1">{attempts.length} total attempts</p>
         </div>
+        {attempts.length > 0 && (
+          <Button
+            variant="danger"
+            onClick={() => setClearAllConfirm(true)}
+          >
+            Clear All Quiz History
+          </Button>
+        )}
       </div>
 
       <div className="mb-4">
@@ -187,6 +223,18 @@ export default function AttemptsPage() {
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={() => setConfirm({
+                        attemptId: attempt.id,
+                        action: 'delete',
+                        title: 'Delete Attempt',
+                        message: `Permanently delete attempt #${attempt.attempt_number} for ${teamId}? This action cannot be undone.`,
+                      })}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                      title="Delete Attempt History"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -207,14 +255,27 @@ export default function AttemptsPage() {
           onClose={() => setConfirm(null)}
           onConfirm={() => {
             if (confirm.action === 'force_submit') handleForceSubmit(confirm.attemptId);
-            else handleCancel(confirm.attemptId);
+            else if (confirm.action === 'cancel') handleCancel(confirm.attemptId);
+            else handleDeleteAttempt(confirm.attemptId);
           }}
           title={confirm.title}
           message={confirm.message}
-          variant={confirm.action === 'cancel' ? 'danger' : 'primary'}
+          variant={confirm.action === 'cancel' || confirm.action === 'delete' ? 'danger' : 'primary'}
           loading={actionLoading}
         />
       )}
+
+      {/* Clear All Attempts Modal */}
+      <ConfirmDialog
+        open={clearAllConfirm}
+        onClose={() => setClearAllConfirm(false)}
+        onConfirm={handleClearAllAttempts}
+        title="Clear All Quiz History"
+        message="Are you sure you want to permanently delete ALL quiz attempts and history for all teams? This action cannot be undone."
+        confirmText="Clear All History"
+        variant="danger"
+        loading={actionLoading}
+      />
 
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>

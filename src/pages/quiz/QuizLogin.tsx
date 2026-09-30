@@ -67,15 +67,37 @@ export default function QuizLogin() {
       }
 
       // 4. Check available attempts
-      const { data: quiz } = await supabase
+      // 4. Fetch quizzes and match by team theme if specified
+      const { data: quizList } = await supabase
         .from('quizzes')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .order('created_at', { ascending: false });
+
+      let quiz = null;
+      if (team.theme && quizList && quizList.length > 0) {
+        // Try finding a LIVE quiz matching team's theme name or description
+        quiz = quizList.find(q => 
+          q.status === 'LIVE' && (
+            q.title.toLowerCase().includes(team.theme.toLowerCase()) || 
+            (q.description && q.description.toLowerCase().includes(team.theme.toLowerCase()))
+          )
+        );
+        // Try finding any quiz matching team's theme name or description
+        if (!quiz) {
+          quiz = quizList.find(q => 
+            q.title.toLowerCase().includes(team.theme.toLowerCase()) || 
+            (q.description && q.description.toLowerCase().includes(team.theme.toLowerCase()))
+          );
+        }
+      }
+
+      // Fallback to active LIVE quiz or latest quiz
+      if (!quiz && quizList && quizList.length > 0) {
+        quiz = quizList.find(q => q.status === 'LIVE') || quizList[0];
+      }
 
       if (!quiz) {
-        setError('No quiz is currently available.');
+        setError('No quiz is currently available for your theme.');
         setLoading(false);
         return;
       }
