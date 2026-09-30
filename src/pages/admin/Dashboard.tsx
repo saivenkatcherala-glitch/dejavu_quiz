@@ -49,8 +49,17 @@ export default function AdminDashboard() {
 
       // Get all teams
       const { data: allTeams } = await supabase.from('Team').select('id, registrationId');
-      
-      const teamCount = (allTeams || []).filter(t => dejavuRegIds.has(t.registrationId)).length;
+      let teamCount = 0;
+      if (allTeams && allTeams.length > 0) {
+        if (dejavuRegs && dejavuRegs.length > 0) {
+          teamCount = allTeams.filter(t => !t.registrationId || dejavuRegIds.has(t.registrationId)).length;
+        } else {
+          teamCount = allTeams.length;
+        }
+      } else {
+        const { count } = await supabase.from('teams').select('*', { count: 'exact', head: true });
+        teamCount = count || 0;
+      }
 
       // Get violation counts
       const { data: violationData } = await supabase

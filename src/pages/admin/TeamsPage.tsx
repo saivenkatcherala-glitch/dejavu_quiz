@@ -43,17 +43,31 @@ export default function TeamsPage() {
 
   const loadTeams = useCallback(async () => {
     try {
-      // Get existing teams from Team table
+      // Get existing teams from Team table and fallback teams table
+      let regTeams: any[] = [];
       const { data: allTeams } = await supabase.from('Team').select('*');
       
-      // Get registrations for DejaVu
       const { data: dejavuRegs } = await supabase
         .from('Registration')
         .select('id')
         .eq('eventId', 'evt_384fc25f545a4e68a379dceed0eb3458');
-        
-      const dejavuRegIds = new Set((dejavuRegs || []).map(r => r.id));
-      const regTeams = (allTeams || []).filter(t => dejavuRegIds.has(t.registrationId));
+
+      if (allTeams && allTeams.length > 0) {
+        if (dejavuRegs && dejavuRegs.length > 0) {
+          const dejavuRegIds = new Set(dejavuRegs.map(r => r.id));
+          regTeams = allTeams.filter(t => !t.registrationId || dejavuRegIds.has(t.registrationId));
+        } else {
+          regTeams = allTeams;
+        }
+      }
+
+      // If Team table is empty or permission error, fallback to teams table
+      if (regTeams.length === 0) {
+        const { data: fallbackTeams } = await supabase.from('teams').select('*');
+        if (fallbackTeams && fallbackTeams.length > 0) {
+          regTeams = fallbackTeams;
+        }
+      }
 
       // Get quiz
       const { data: quizData } = await supabase

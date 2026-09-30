@@ -42,29 +42,107 @@ export default function QuestionsPage() {
   // Preview
   const [previewQ, setPreviewQ] = useState<Question | null>(null);
 
+  // Multi-select & Bulk Delete
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [selectedQuizId, setSelectedQuizId] = useState<string>('');
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
+
   useEffect(() => {
-    loadData();
+    loadQuizzes();
   }, []);
 
-  async function loadData() {
-    const { data: quizData } = await supabase
+  async function loadQuizzes() {
+    const { data: allQuizzes } = await supabase
       .from('quizzes')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .order('created_at', { ascending: false });
+
+    setQuizzes(allQuizzes || []);
+    if (allQuizzes && allQuizzes.length > 0) {
+      const activeId = selectedQuizId || allQuizzes[0].id;
+      setSelectedQuizId(activeId);
+      loadQuestions(activeId);
+    } else {
+      setLoading(false);
+    }
+  }
+
+  async function loadQuestions(qId: string) {
+    setLoading(true);
+    const { data: qData } = await supabase
+      .from('quizzes')
+      .select('*')
+      .eq('id', qId)
       .single();
 
-    setQuiz(quizData);
+    setQuiz(qData || null);
 
-    if (quizData) {
-      const { data } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('quiz_id', quizData.id)
-        .order('sort_order', { ascending: true });
-      setQuestions(data || []);
-    }
+    const { data } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('quiz_id', qId)
+      .order('sort_order', { ascending: true });
+
+    setQuestions(data || []);
+    setSelectedIds([]);
     setLoading(false);
+  }
+
+  function handleQuizChange(id: string) {
+    setSelectedQuizId(id);
+    loadQuestions(id);
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.length === questions.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(questions.map(q => q.id));
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.length === 0) return;
+    setDeleteLoading(true);
+
+    const { error } = await supabase.from('questions').delete().in('id', selectedIds);
+    if (!error) {
+      setToast({ message: `Deleted ${selectedIds.length} questions`, type: 'success' });
+      await logAction('Bulk deleted questions', 'questions', selectedIds.join(','));
+    } else {
+      setToast({ message: 'Failed to delete questions', type: 'error' });
+    }
+
+    setDeleteLoading(false);
+    setBulkDeleteConfirm(false);
+    setSelectedIds([]);
+    if (selectedQuizId) loadQuestions(selectedQuizId);
+  }
+
+  async function handleDeleteAll() {
+    if (!quiz) return;
+    setDeleteLoading(true);
+
+    const { error } = await supabase.from('questions').delete().eq('quiz_id', quiz.id);
+    if (!error) {
+      setToast({ message: `Deleted all questions for ${quiz.title}`, type: 'success' });
+      await logAction('Deleted all questions', 'quiz', quiz.id);
+    } else {
+      setToast({ message: 'Failed to delete all questions', type: 'error' });
+    }
+
+    setDeleteLoading(false);
+    setDeleteAllConfirm(false);
+    setSelectedIds([]);
+    if (selectedQuizId) loadQuestions(selectedQuizId);
   }
 
   function openAdd() {
@@ -242,12 +320,33 @@ export default function QuestionsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Questions</h1>
-          <p className="text-gray-500 text-sm mt-1">{questions.length} questions</p>
+          <p className="text-gray-500 text-sm mt-1">
+            {questions.length} questions {quiz ? `in "${quiz.title}"` : ''}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Quiz Selector */}
+          {quizzes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">Quiz:</span>
+              <select
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                value={selectedQuizId}
+                onChange={e => handleQuizChange(e.target.value)}
+              >
+                {quizzes.map(q => (
+                  <option key={q.id} value={q.id}>
+                    {q.title} ({q.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <input
             ref={fileRef}
             type="file"
@@ -266,70 +365,119 @@ export default function QuestionsPage() {
         </div>
       </div>
 
+      {/* Select All & Bulk Actions Bar */}
+      {questions.length > 0 && (
+        <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3 mb-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="selectAll"
+              className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+              checked={selectedIds.length === questions.length && questions.length > 0}
+              onChange={toggleSelectAll}
+            />
+            <label htmlFor="selectAll" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+              Select All ({selectedIds.length}/{questions.length} selected)
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {selectedIds.length > 0 && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setBulkDeleteConfirm(true)}
+              >
+                <Trash2 className="w-4 h-4 mr-1.5" />
+                Delete Selected ({selectedIds.length})
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="text-red-600 hover:bg-red-50 border-red-200"
+              onClick={() => setDeleteAllConfirm(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-1.5" />
+              Delete All Questions
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Questions List */}
       <div className="space-y-3">
-        {questions.map((q, index) => (
-          <Card key={q.id}>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm font-medium text-indigo-600">Q{index + 1}</span>
-                  <span className="text-xs text-gray-400">|</span>
-                  <span className="text-xs text-gray-500">{q.marks} mark{q.marks !== 1 ? 's' : ''}</span>
-                  {q.negative_marks > 0 && (
-                    <span className="text-xs text-red-500">-{q.negative_marks}</span>
-                  )}
+        {questions.map((q, index) => {
+          const isSelected = selectedIds.includes(q.id);
+          return (
+            <Card key={q.id} className={isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50/20' : ''}>
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 mt-1 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(q.id)}
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm font-medium text-indigo-600">Q{index + 1}</span>
+                    <span className="text-xs text-gray-400">|</span>
+                    <span className="text-xs text-gray-500">{q.marks} mark{q.marks !== 1 ? 's' : ''}</span>
+                    {q.negative_marks > 0 && (
+                      <span className="text-xs text-red-500">-{q.negative_marks}</span>
+                    )}
+                  </div>
+                  <p className="text-gray-900">{q.question_text}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {(['A', 'B', 'C', 'D'] as OptionLetter[]).map(opt => {
+                      const optionText = q[`option_${opt.toLowerCase()}` as keyof Question] as string;
+                      const isCorrect = q.correct_option === opt;
+                      return (
+                        <div
+                          key={opt}
+                          className={`px-3 py-1.5 rounded-lg text-sm ${
+                            isCorrect ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-600'
+                          }`}
+                        >
+                          <span className="font-medium">{opt}.</span> {optionText}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <p className="text-gray-900">{q.question_text}</p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {(['A', 'B', 'C', 'D'] as OptionLetter[]).map(opt => {
-                    const optionText = q[`option_${opt.toLowerCase()}` as keyof Question] as string;
-                    const isCorrect = q.correct_option === opt;
-                    return (
-                      <div
-                        key={opt}
-                        className={`px-3 py-1.5 rounded-lg text-sm ${
-                          isCorrect ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-600'
-                        }`}
-                      >
-                        <span className="font-medium">{opt}.</span> {optionText}
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setPreviewQ(q)}
+                    className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                    title="Preview"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => openEdit(q)}
+                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                    title="Edit"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeleteId(q.id)}
+                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => setPreviewQ(q)}
-                  className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
-                  title="Preview"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => openEdit(q)}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                  title="Edit"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setDeleteId(q.id)}
-                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
 
         {questions.length === 0 && (
           <Card>
             <div className="text-center py-8">
               <FileText className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">No questions yet. Add questions or import from CSV.</p>
+              <p className="text-gray-500">No questions yet for this quiz. Add questions or import from CSV.</p>
             </div>
           </Card>
         )}
@@ -416,7 +564,7 @@ export default function QuestionsPage() {
         </div>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* Single Delete Confirmation */}
       <ConfirmDialog
         open={!!deleteId}
         onClose={() => setDeleteId(null)}
@@ -424,6 +572,30 @@ export default function QuestionsPage() {
         title="Delete Question"
         message="Are you sure you want to delete this question? This cannot be undone."
         confirmText="Delete"
+        variant="danger"
+        loading={deleteLoading}
+      />
+
+      {/* Bulk Delete Confirmation */}
+      <ConfirmDialog
+        open={bulkDeleteConfirm}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDelete}
+        title={`Delete ${selectedIds.length} Questions`}
+        message={`Are you sure you want to delete the ${selectedIds.length} selected questions? This cannot be undone.`}
+        confirmText={`Delete ${selectedIds.length} Questions`}
+        variant="danger"
+        loading={deleteLoading}
+      />
+
+      {/* Delete All Confirmation */}
+      <ConfirmDialog
+        open={deleteAllConfirm}
+        onClose={() => setDeleteAllConfirm(false)}
+        onConfirm={handleDeleteAll}
+        title="Delete ALL Questions"
+        message={`Are you sure you want to delete ALL ${questions.length} questions in this quiz? This action is permanent and cannot be undone.`}
+        confirmText="Delete ALL Questions"
         variant="danger"
         loading={deleteLoading}
       />
