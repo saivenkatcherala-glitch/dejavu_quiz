@@ -80,21 +80,32 @@ export default function QuizLogin() {
         const teamThemeNorm = normalize(team.theme);
 
         // First try finding a LIVE quiz matching team's theme
-        quiz = quizList.find(q => 
-          q.status === 'LIVE' && (
-            normalize(q.title).includes(teamThemeNorm) || 
-            normalize(q.description || '').includes(teamThemeNorm) ||
-            teamThemeNorm.includes(normalize(q.title))
-          )
-        );
+        quiz = quizList.find(q => {
+          if (q.status !== 'LIVE') return false;
+          const titleNorm = normalize(q.title);
+          const descNorm = normalize(q.description || '');
+          if (!teamThemeNorm) return false;
+          
+          return (
+            (titleNorm && titleNorm.includes(teamThemeNorm)) ||
+            (descNorm && descNorm.includes(teamThemeNorm)) ||
+            (titleNorm && teamThemeNorm.includes(titleNorm))
+          );
+        });
 
         // Then try finding ANY status quiz matching team's theme
         if (!quiz) {
-          quiz = quizList.find(q => 
-            normalize(q.title).includes(teamThemeNorm) || 
-            normalize(q.description || '').includes(teamThemeNorm) ||
-            teamThemeNorm.includes(normalize(q.title))
-          );
+          quiz = quizList.find(q => {
+            const titleNorm = normalize(q.title);
+            const descNorm = normalize(q.description || '');
+            if (!teamThemeNorm) return false;
+            
+            return (
+              (titleNorm && titleNorm.includes(teamThemeNorm)) ||
+              (descNorm && descNorm.includes(teamThemeNorm)) ||
+              (titleNorm && teamThemeNorm.includes(titleNorm))
+            );
+          });
         }
 
         // STRICT MODE: If team has a theme but we couldn't find a matching quiz, block them.
