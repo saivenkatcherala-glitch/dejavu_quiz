@@ -23,11 +23,12 @@ export default function Instructions() {
   }, []);
 
   async function loadQuiz() {
+    if (!session?.quizId) return;
+    
     const { data } = await supabase
       .from('quizzes')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .eq('id', session.quizId)
       .single();
     setQuiz(data);
     setLoading(false);

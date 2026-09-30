@@ -393,6 +393,7 @@ BEGIN
     RETURN json_build_object('error', 'Team is disabled');
   END IF;
 
+  -- Count only SUBMITTED attempts against their limit
   SELECT COUNT(*) INTO v_attempt_count FROM public.quiz_attempts
   WHERE quiz_id = p_quiz_id AND team_id = p_team_id AND status IN ('submitted','auto_submitted');
 
@@ -400,13 +401,22 @@ BEGIN
     RETURN json_build_object('error', 'No attempts remaining', 'used', v_attempt_count, 'allowed', v_allowed);
   END IF;
 
-  INSERT INTO public.quiz_attempts (
-    quiz_id, team_id, attempt_number, started_at, expires_at, status, session_token
-  ) VALUES (
-    p_quiz_id, p_team_id, v_attempt_count + 1,
-    now(), now() + (v_quiz.duration_seconds || ' seconds')::interval,
-    'in_progress', p_session_token
-  ) RETURNING * INTO v_attempt;
+  -- Get the absolute max attempt number to avoid unique constraint violations
+  DECLARE
+    v_max_attempt_number INTEGER;
+  BEGIN
+    SELECT COALESCE(MAX(attempt_number), 0) INTO v_max_attempt_number 
+    FROM public.quiz_attempts
+    WHERE quiz_id = p_quiz_id AND team_id = p_team_id;
+
+    INSERT INTO public.quiz_attempts (
+      quiz_id, team_id, attempt_number, started_at, expires_at, status, session_token
+    ) VALUES (
+      p_quiz_id, p_team_id, v_max_attempt_number + 1,
+      now(), now() + (v_quiz.duration_seconds || ' seconds')::interval,
+      'in_progress', p_session_token
+    ) RETURNING * INTO v_attempt;
+  END;
 
   RETURN json_build_object(
     'attempt_id', v_attempt.id, 'attempt_number', v_attempt.attempt_number,

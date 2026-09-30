@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useTeamSession } from '@/contexts/TeamSessionContext';
 import { Button, Input, Card } from '@/components/ui';
+import type { Quiz } from '@/lib/types';
 
 export default function QuizLogin() {
   const [teamId, setTeamId] = useState('');
@@ -10,6 +11,8 @@ export default function QuizLogin() {
   const [loading, setLoading] = useState(false);
   const [teamName, setTeamName] = useState('');
   const [verified, setVerified] = useState(false);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [selectedQuizId, setSelectedQuizId] = useState<string>('');
   const { setTeamSession } = useTeamSession();
   const navigate = useNavigate();
 
@@ -66,98 +69,47 @@ export default function QuizLogin() {
         return;
       }
 
-      // 4. Fetch quizzes and match by team theme if specified
-      const { data: quizList } = await supabase
-        .from('quizzes')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Check if team already has attempts (locks them to a quiz)
+      const { data: pastAttempts } = await supabase
+        .from('quiz_attempts')
+        .select('quiz_id')
+        .eq('team_id', trimmedId)
+        .in('status', ['submitted', 'auto_submitted', 'in_progress']);
 
-      let quiz = null;
-      
-      if (team.theme && quizList && quizList.length > 0) {
-        // Helper to normalize strings for comparison (removes spaces, underscores, etc)
-        const normalize = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const teamThemeNorm = normalize(team.theme);
-
-        // First try finding a LIVE quiz matching team's theme
-        quiz = quizList.find(q => {
-          if (q.status !== 'LIVE') return false;
-          const titleNorm = normalize(q.title);
-          const descNorm = normalize(q.description || '');
-          if (!teamThemeNorm) return false;
-          
-          return (
-            (titleNorm && titleNorm.includes(teamThemeNorm)) ||
-            (descNorm && descNorm.includes(teamThemeNorm)) ||
-            (titleNorm && teamThemeNorm.includes(titleNorm))
-          );
-        });
-
-        // Then try finding ANY status quiz matching team's theme
-        if (!quiz) {
-          quiz = quizList.find(q => {
-            const titleNorm = normalize(q.title);
-            const descNorm = normalize(q.description || '');
-            if (!teamThemeNorm) return false;
-            
-            return (
-              (titleNorm && titleNorm.includes(teamThemeNorm)) ||
-              (descNorm && descNorm.includes(teamThemeNorm)) ||
-              (titleNorm && teamThemeNorm.includes(titleNorm))
-            );
-          });
-        }
-
-        // STRICT MODE: If team has a theme but we couldn't find a matching quiz, block them.
-        if (!quiz) {
-          setError(`No quiz section found for your theme (${team.theme}). Please contact the organizer.`);
-          setLoading(false);
-          return;
-        }
-      } else {
-        // Fallback for teams WITHOUT a theme (if applicable)
-        if (quizList && quizList.length > 0) {
-          quiz = quizList.find(q => q.status === 'LIVE') || quizList[0];
-        }
+      let lockedQuizId = null;
+      if (pastAttempts && pastAttempts.length > 0) {
+        lockedQuizId = pastAttempts[0].quiz_id;
       }
 
-      if (!quiz) {
-        setError('No quizzes are currently available.');
+      // Fetch LIVE quizzes
+      let query = supabase.from('quizzes').select('*').eq('status', 'LIVE').order('created_at', { ascending: false });
+      
+      // If locked, we fetch that specific quiz even if it's not LIVE anymore (so they can review it or resume if allowed)
+      if (lockedQuizId) {
+        query = supabase.from('quizzes').select('*').eq('id', lockedQuizId);
+      }
+
+      const { data: quizList, error: quizError } = await query;
+      
+      if (quizError || !quizList || quizList.length === 0) {
+        setError(lockedQuizId ? 'Your assigned quiz is no longer available.' : 'No LIVE quizzes are currently available.');
         setLoading(false);
         return;
       }
 
-      // Check for active attempt (can resume)
-      const { data: activeAttempt } = await supabase
-        .from('quiz_attempts')
-        .select('*')
-        .eq('quiz_id', quiz.id)
-        .eq('team_id', trimmedId)
-        .eq('status', 'in_progress')
-        .single();
-
-      if (!activeAttempt) {
-        // Check completed attempts
-        const { count: completedCount } = await supabase
-          .from('quiz_attempts')
-          .select('*', { count: 'exact', head: true })
-          .eq('quiz_id', quiz.id)
-          .eq('team_id', trimmedId)
-          .in('status', ['submitted', 'auto_submitted']);
-
-        const allowedAttempts = settings?.allowed_attempts ?? quiz.default_allowed_attempts;
-        if ((completedCount || 0) >= allowedAttempts) {
-          setError(`All attempts have been used (${completedCount}/${allowedAttempts}). Contact the organizer for additional attempts.`);
-          setLoading(false);
-          return;
-        }
+      setQuizzes(quizList);
+      if (quizList.length === 1 || lockedQuizId) {
+        setSelectedQuizId(quizList[0].id);
+      } else {
+        // If multiple LIVE quizzes and no lock, let them select (no default to force explicit choice if we want, or default to first)
+        setSelectedQuizId('');
       }
 
-      // Success
+      // Success (verification step)
       const name = team.team_name || team.name || trimmedId;
       setTeamName(name);
       setVerified(true);
-      setTeamSession(trimmedId, name);
+
 
     } catch (err) {
       setError('An error occurred. Please try again.');
@@ -166,8 +118,44 @@ export default function QuizLogin() {
     }
   }
 
-  function handleContinue() {
-    navigate('/quiz/check');
+  }
+
+  async function handleContinue() {
+    if (!selectedQuizId) {
+      setError('Please select a quiz to continue.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const trimmedId = teamId.trim();
+      const { data: quiz } = await supabase.from('quizzes').select('default_allowed_attempts').eq('id', selectedQuizId).single();
+      const { data: settings } = await supabase.from('team_quiz_settings').select('allowed_attempts').eq('team_id', trimmedId).single();
+      
+      const { data: activeAttempt } = await supabase.from('quiz_attempts')
+        .select('id').eq('quiz_id', selectedQuizId).eq('team_id', trimmedId).eq('status', 'in_progress').maybeSingle();
+
+      if (!activeAttempt) {
+        const { count: completedCount } = await supabase.from('quiz_attempts')
+          .select('*', { count: 'exact', head: true })
+          .eq('quiz_id', selectedQuizId).eq('team_id', trimmedId).in('status', ['submitted', 'auto_submitted']);
+
+        const allowedAttempts = settings?.allowed_attempts ?? quiz?.default_allowed_attempts ?? 1;
+        if ((completedCount || 0) >= allowedAttempts) {
+          setError(`All attempts have been used (${completedCount}/${allowedAttempts}). Contact the organizer for additional attempts.`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      setTeamSession(trimmedId, teamName, selectedQuizId);
+      navigate('/quiz/check');
+    } catch(err) {
+      setError('Failed to start quiz. Please try again.');
+      setLoading(false);
+    }
   }
 
   return (
@@ -216,7 +204,34 @@ export default function QuizLogin() {
                 <p className="text-sm text-gray-500">Team ID: {teamId.trim()}</p>
                 <h2 className="text-2xl font-bold text-gray-900 mt-1">Welcome, {teamName}</h2>
               </div>
-              <Button onClick={handleContinue} className="w-full" size="lg">
+              
+              <div className="text-left mt-6 mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {quizzes.length === 1 ? 'Assigned Quiz / Theme' : 'Select your Theme / Quiz'}
+                </label>
+                <select
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm"
+                  value={selectedQuizId}
+                  onChange={(e) => setSelectedQuizId(e.target.value)}
+                  disabled={quizzes.length === 1}
+                >
+                  <option value="" disabled>-- Select a Quiz --</option>
+                  {quizzes.map(q => (
+                    <option key={q.id} value={q.id}>{q.title}</option>
+                  ))}
+                </select>
+                {quizzes.length > 1 && (
+                  <p className="text-xs text-orange-600 mt-2 font-medium">
+                    ⚠️ You can only attempt ONE quiz. Once started, you cannot switch.
+                  </p>
+                )}
+              </div>
+
+              {error && (
+                <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
+              )}
+              
+              <Button onClick={handleContinue} className="w-full" size="lg" loading={loading}>
                 Proceed to System Check
               </Button>
             </div>

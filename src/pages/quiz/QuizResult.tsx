@@ -27,8 +27,7 @@ export default function QuizResult() {
       const { data: quizData } = await supabase
         .from('quizzes')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('id', session!.quizId)
         .single();
 
       if (!quizData) {

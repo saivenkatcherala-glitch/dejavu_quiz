@@ -208,6 +208,7 @@ export interface CSVValidationResult {
 export interface TeamSession {
   teamId: string;
   teamName: string;
+  quizId?: string;
   attemptId?: string;
   sessionToken: string;
 }

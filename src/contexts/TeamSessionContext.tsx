@@ -4,7 +4,7 @@ import { generateSessionToken } from '@/lib/utils';
 
 interface TeamSessionContextType {
   session: TeamSession | null;
-  setTeamSession: (teamId: string, teamName: string) => void;
+  setTeamSession: (teamId: string, teamName: string, quizId?: string) => void;
   setAttemptId: (attemptId: string) => void;
   clearSession: () => void;
 }
@@ -32,10 +32,11 @@ function saveSession(session: TeamSession | null) {
 export function TeamSessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<TeamSession | null>(loadSession);
 
-  const setTeamSession = useCallback((teamId: string, teamName: string) => {
+  const setTeamSession = useCallback((teamId: string, teamName: string, quizId?: string) => {
     const newSession: TeamSession = {
       teamId,
       teamName,
+      quizId,
       sessionToken: generateSessionToken(),
     };
     setSession(newSession);
