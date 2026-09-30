@@ -12,6 +12,7 @@ export default function QuizControlPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [confirm, setConfirm] = useState<{ action: QuizStatus; title: string; message: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [questionCount, setQuestionCount] = useState(0);
   const [editMode, setEditMode] = useState(false);
 
@@ -170,6 +171,38 @@ export default function QuizControlPage() {
     });
   }
 
+  async function handleDeleteQuiz() {
+    if (!quiz) return;
+    setSaving(true);
+    try {
+      // 1. Delete questions
+      await supabase.from('questions').delete().eq('quiz_id', quiz.id);
+      
+      // 2. Find and delete attempts and their violations
+      const { data: attempts } = await supabase.from('quiz_attempts').select('id').eq('quiz_id', quiz.id);
+      if (attempts && attempts.length > 0) {
+        const attemptIds = attempts.map(a => a.id);
+        await supabase.from('violations').delete().in('attempt_id', attemptIds);
+        await supabase.from('quiz_attempts').delete().in('id', attemptIds);
+      }
+      
+      // 3. Delete the quiz
+      const { error } = await supabase.from('quizzes').delete().eq('id', quiz.id);
+      if (error) throw error;
+      
+      setToast({ message: 'Quiz permanently deleted', type: 'success' });
+      await logAction('Deleted quiz', 'quiz', quiz.id);
+      setDeleteConfirm(false);
+      // reset selection and load
+      setSelectedQuizId('');
+      loadQuizzes();
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to delete quiz', type: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
   }
@@ -260,6 +293,10 @@ export default function QuizControlPage() {
                 Close Quiz
               </Button>
             )}
+            
+            <Button variant="danger" className="bg-red-50 text-red-600 border-red-200 hover:bg-red-100" onClick={() => setDeleteConfirm(true)} loading={saving}>
+              Delete Quiz Completely
+            </Button>
           </div>
         </div>
         <div className="flex items-center gap-6 text-sm text-gray-500">
@@ -384,6 +421,18 @@ export default function QuizControlPage() {
           loading={saving}
         />
       )}
+
+      {/* Delete Quiz Dialog */}
+      <ConfirmDialog
+        open={deleteConfirm}
+        onClose={() => setDeleteConfirm(false)}
+        onConfirm={handleDeleteQuiz}
+        title="Delete Quiz Completely"
+        message={`Are you sure you want to permanently delete "${quiz.title}"? This will ALSO delete all questions, attempts, and violations associated with it. This CANNOT be undone.`}
+        confirmText="Yes, Delete Quiz"
+        variant="danger"
+        loading={saving}
+      />
 
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
