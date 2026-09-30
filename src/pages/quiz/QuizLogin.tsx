@@ -118,7 +118,7 @@ export default function QuizLogin() {
     }
   }
 
-  }
+
 
   async function handleContinue() {
     if (!selectedQuizId) {
