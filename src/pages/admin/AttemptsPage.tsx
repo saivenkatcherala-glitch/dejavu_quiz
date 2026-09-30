@@ -15,7 +15,12 @@ export default function AttemptsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [confirm, setConfirm] = useState<{
     attemptId: string;
+    action: 'force_submit' | 'cancel' | 'delete';
+    title: string;
+    message: string;
+  } | null>(null);
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
   async function handleDeleteAttempt(attemptId: string) {
     setActionLoading(true);

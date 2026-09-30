@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
-import { Button, Input, Card, Badge, ConfirmDialog, Toast, Spinner } from '@/components/ui';
+import { Button, Input, Card, Badge, ConfirmDialog, Toast, Spinner, Modal } from '@/components/ui';
 import type { Quiz, QuizStatus } from '@/lib/types';
 import { Play, Pause, Square, Edit, Check, Settings } from 'lucide-react';
 
@@ -135,7 +135,7 @@ export default function QuizControlPage() {
       setToast({ message: 'Settings saved', type: 'success' });
       await logAction('Changed settings', 'quiz', quiz.id, form);
       setEditMode(false);
-      loadQuiz();
+      if (selectedQuizId) loadQuizDetails(selectedQuizId);
     }
     setSaving(false);
   }
@@ -154,7 +154,7 @@ export default function QuizControlPage() {
     } else {
       setToast({ message: `Quiz is now ${newStatus}`, type: 'success' });
       await logAction(`${newStatus === 'LIVE' ? 'Started' : newStatus === 'PAUSED' ? 'Paused' : newStatus === 'CLOSED' ? 'Closed' : 'Updated'} quiz`, 'quiz', quiz.id);
-      loadQuiz();
+      if (selectedQuizId) loadQuizDetails(selectedQuizId);
     }
     setSaving(false);
     setConfirm(null);
@@ -280,7 +280,7 @@ export default function QuizControlPage() {
             </Button>
           ) : (
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => { setEditMode(false); loadQuiz(); }}>Cancel</Button>
+              <Button variant="secondary" size="sm" onClick={() => { setEditMode(false); if (selectedQuizId) loadQuizDetails(selectedQuizId); }}>Cancel</Button>
               <Button size="sm" onClick={saveSettings} loading={saving}>Save</Button>
             </div>
           )}

@@ -212,7 +212,7 @@ export default function QuestionsPage() {
 
     setFormLoading(false);
     setFormOpen(false);
-    loadData();
+    if (selectedQuizId) loadQuestions(selectedQuizId);
   }
 
   async function handleDelete() {
@@ -225,7 +225,7 @@ export default function QuestionsPage() {
     }
     setDeleteLoading(false);
     setDeleteId(null);
-    loadData();
+    if (selectedQuizId) loadQuestions(selectedQuizId);
   }
 
   async function logAction(action: string, targetType: string, targetId: string) {
@@ -311,7 +311,7 @@ export default function QuestionsPage() {
 
     setCsvLoading(false);
     setCsvOpen(false);
-    loadData();
+    if (selectedQuizId) loadQuestions(selectedQuizId);
   }
 
   if (loading) {
