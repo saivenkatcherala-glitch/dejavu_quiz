@@ -69,41 +69,22 @@ export default function QuizLogin() {
         return;
       }
 
-      // Check if team already has attempts (locks them to a quiz)
-      const { data: pastAttempts } = await supabase
-        .from('quiz_attempts')
-        .select('quiz_id')
-        .eq('team_id', trimmedId)
-        .in('status', ['submitted', 'auto_submitted', 'in_progress']);
-
-      let lockedQuizId = null;
-      if (pastAttempts && pastAttempts.length > 0) {
-        lockedQuizId = pastAttempts[0].quiz_id;
-      }
-
-      // Fetch LIVE quizzes
-      let query = supabase.from('quizzes').select('*').eq('status', 'LIVE').order('created_at', { ascending: false });
-      
-      // If locked, we fetch that specific quiz even if it's not LIVE anymore (so they can review it or resume if allowed)
-      if (lockedQuizId) {
-        query = supabase.from('quizzes').select('*').eq('id', lockedQuizId);
-      }
-
-      const { data: quizList, error: quizError } = await query;
+      // Always fetch ALL LIVE quizzes - let participant choose their theme
+      const { data: quizList, error: quizError } = await supabase
+        .from('quizzes')
+        .select('*')
+        .eq('status', 'LIVE')
+        .order('created_at', { ascending: false });
       
       if (quizError || !quizList || quizList.length === 0) {
-        setError(lockedQuizId ? 'Your assigned quiz is no longer available.' : 'No LIVE quizzes are currently available.');
+        setError('No LIVE quizzes are currently available. Please wait for the organizer.');
         setLoading(false);
         return;
       }
 
       setQuizzes(quizList);
-      if (quizList.length === 1 || lockedQuizId) {
-        setSelectedQuizId(quizList[0].id);
-      } else {
-        // If multiple LIVE quizzes and no lock, let them select (no default to force explicit choice if we want, or default to first)
-        setSelectedQuizId('');
-      }
+      // Default to first quiz if only one available
+      setSelectedQuizId(quizList.length === 1 ? quizList[0].id : '');
 
       // Success (verification step)
       const name = team.team_name || team.name || trimmedId;
@@ -131,6 +112,25 @@ export default function QuizLogin() {
 
     try {
       const trimmedId = teamId.trim();
+
+      // Block if team has already attempted a DIFFERENT quiz
+      const { data: pastAttempts } = await supabase
+        .from('quiz_attempts')
+        .select('quiz_id')
+        .eq('team_id', trimmedId)
+        .in('status', ['submitted', 'auto_submitted', 'in_progress']);
+
+      if (pastAttempts && pastAttempts.length > 0) {
+        const attemptedQuizId = pastAttempts[0].quiz_id;
+        if (attemptedQuizId !== selectedQuizId) {
+          // They already started a different quiz - cannot switch
+          const { data: attemptedQuiz } = await supabase.from('quizzes').select('title').eq('id', attemptedQuizId).single();
+          setError(`You have already started the "${attemptedQuiz?.title || 'another'}" quiz. You cannot switch themes.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const { data: quiz } = await supabase.from('quizzes').select('default_allowed_attempts').eq('id', selectedQuizId).single();
       const { data: settings } = await supabase.from('team_quiz_settings').select('allowed_attempts').eq('team_id', trimmedId).single();
       
@@ -207,24 +207,21 @@ export default function QuizLogin() {
               
               <div className="text-left mt-6 mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  {quizzes.length === 1 ? 'Assigned Quiz / Theme' : 'Select your Theme / Quiz'}
+                  Select your Theme / Quiz
                 </label>
                 <select
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm"
                   value={selectedQuizId}
                   onChange={(e) => setSelectedQuizId(e.target.value)}
-                  disabled={quizzes.length === 1}
                 >
-                  <option value="" disabled>-- Select a Quiz --</option>
+                  <option value="" disabled>-- Select your theme --</option>
                   {quizzes.map(q => (
                     <option key={q.id} value={q.id}>{q.title}</option>
                   ))}
                 </select>
-                {quizzes.length > 1 && (
-                  <p className="text-xs text-orange-600 mt-2 font-medium">
-                    ⚠️ You can only attempt ONE quiz. Once started, you cannot switch.
-                  </p>
-                )}
+                <p className="text-xs text-orange-600 mt-2 font-medium">
+                  ⚠️ You can only attempt ONE theme. Once you proceed, you cannot switch.
+                </p>
               </div>
 
               {error && (
