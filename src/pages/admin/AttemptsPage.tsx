@@ -10,6 +10,8 @@ export default function AttemptsPage() {
   const { user } = useAdminAuth();
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [filtered, setFiltered] = useState<QuizAttempt[]>([]);
+  const [quizzes, setQuizzes] = useState<{id: string, title: string, status: string}[]>([]);
+  const [selectedQuizId, setSelectedQuizId] = useState<string>('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -29,7 +31,7 @@ export default function AttemptsPage() {
       await supabase.from('quiz_attempts').delete().eq('id', attemptId);
       setToast({ message: 'Attempt deleted', type: 'success' });
       await logAction('Deleted attempt', 'attempt', attemptId);
-      loadAttempts();
+      if (selectedQuizId) loadAttempts(selectedQuizId);
     } catch (err: any) {
       setToast({ message: err.message || 'Failed to delete attempt', type: 'error' });
     } finally {
@@ -41,11 +43,15 @@ export default function AttemptsPage() {
   async function handleClearAllAttempts() {
     setActionLoading(true);
     try {
-      await supabase.from('violations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('quiz_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      setToast({ message: 'All quiz attempts & history cleared', type: 'success' });
-      await logAction('Cleared all quiz history', 'attempts', 'all');
-      loadAttempts();
+      const { data: attemptsList } = await supabase.from('quiz_attempts').select('id').eq('quiz_id', selectedQuizId);
+      if (attemptsList && attemptsList.length > 0) {
+        const attemptIds = attemptsList.map(a => a.id);
+        await supabase.from('violations').delete().in('attempt_id', attemptIds);
+        await supabase.from('quiz_attempts').delete().in('id', attemptIds);
+      }
+      setToast({ message: 'All quiz attempts & history cleared for this quiz', type: 'success' });
+      await logAction('Cleared all quiz history', 'attempts', selectedQuizId);
+      if (selectedQuizId) loadAttempts(selectedQuizId);
     } catch (err: any) {
       setToast({ message: err.message || 'Failed to clear history', type: 'error' });
     } finally {
@@ -55,27 +61,40 @@ export default function AttemptsPage() {
   }
 
   useEffect(() => {
-    loadAttempts();
+    loadQuizzes();
   }, []);
 
-  async function loadAttempts() {
-    const { data: quizData } = await supabase
+  async function loadQuizzes() {
+    const { data: allQuizzes } = await supabase
       .from('quizzes')
-      .select('id')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+      .select('id, title, status')
+      .order('created_at', { ascending: false });
 
-    if (quizData) {
-      const { data } = await supabase
-        .from('quiz_attempts')
-        .select('*')
-        .eq('quiz_id', quizData.id)
-        .order('created_at', { ascending: false });
-      setAttempts(data || []);
-      setFiltered(data || []);
+    setQuizzes(allQuizzes || []);
+    if (allQuizzes && allQuizzes.length > 0) {
+      const activeId = selectedQuizId || allQuizzes[0].id;
+      setSelectedQuizId(activeId);
+      loadAttempts(activeId);
+    } else {
+      setLoading(false);
     }
+  }
+
+  async function loadAttempts(qId: string) {
+    setLoading(true);
+    const { data } = await supabase
+      .from('quiz_attempts')
+      .select('*')
+      .eq('quiz_id', qId)
+      .order('created_at', { ascending: false });
+    setAttempts(data || []);
+    setFiltered(data || []);
     setLoading(false);
+  }
+
+  function handleQuizChange(id: string) {
+    setSelectedQuizId(id);
+    loadAttempts(id);
   }
 
   useEffect(() => {
@@ -98,7 +117,7 @@ export default function AttemptsPage() {
       if (error) throw error;
       setToast({ message: 'Attempt force submitted', type: 'success' });
       await logAction('Force submitted', 'attempt', attemptId);
-      loadAttempts();
+      if (selectedQuizId) loadAttempts(selectedQuizId);
     } catch (err: any) {
       setToast({ message: err.message || 'Failed', type: 'error' });
     } finally {
@@ -116,7 +135,7 @@ export default function AttemptsPage() {
         .eq('id', attemptId);
       setToast({ message: 'Attempt cancelled', type: 'success' });
       await logAction('Cancelled attempt', 'attempt', attemptId);
-      loadAttempts();
+      if (selectedQuizId) loadAttempts(selectedQuizId);
     } catch (err: any) {
       setToast({ message: err.message || 'Failed', type: 'error' });
     } finally {
@@ -146,19 +165,38 @@ export default function AttemptsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Attempts</h1>
-          <p className="text-gray-500 text-sm mt-1">{attempts.length} total attempts</p>
+          <p className="text-gray-500 text-sm mt-1">{attempts.length} total attempts for this quiz</p>
         </div>
-        {attempts.length > 0 && (
-          <Button
-            variant="danger"
-            onClick={() => setClearAllConfirm(true)}
-          >
-            Clear All Quiz History
-          </Button>
-        )}
+        
+        <div className="flex flex-wrap items-center gap-3">
+          {quizzes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">Quiz:</span>
+              <select
+                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                value={selectedQuizId}
+                onChange={e => handleQuizChange(e.target.value)}
+              >
+                {quizzes.map(q => (
+                  <option key={q.id} value={q.id}>
+                    {q.title} ({q.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {attempts.length > 0 && (
+            <Button
+              variant="danger"
+              onClick={() => setClearAllConfirm(true)}
+            >
+              Clear History For This Quiz
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4">
@@ -275,9 +313,9 @@ export default function AttemptsPage() {
         open={clearAllConfirm}
         onClose={() => setClearAllConfirm(false)}
         onConfirm={handleClearAllAttempts}
-        title="Clear All Quiz History"
-        message="Are you sure you want to permanently delete ALL quiz attempts and history for all teams? This action cannot be undone."
-        confirmText="Clear All History"
+        title="Clear Quiz History"
+        message="Are you sure you want to permanently delete ALL quiz attempts and history for the currently selected quiz? This action cannot be undone."
+        confirmText="Clear History"
         variant="danger"
         loading={actionLoading}
       />
