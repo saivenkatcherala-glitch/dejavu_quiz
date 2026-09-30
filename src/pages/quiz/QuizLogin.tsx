@@ -66,7 +66,6 @@ export default function QuizLogin() {
         return;
       }
 
-      // 4. Check available attempts
       // 4. Fetch quizzes and match by team theme if specified
       const { data: quizList } = await supabase
         .from('quizzes')
@@ -74,30 +73,45 @@ export default function QuizLogin() {
         .order('created_at', { ascending: false });
 
       let quiz = null;
+      
       if (team.theme && quizList && quizList.length > 0) {
-        // Try finding a LIVE quiz matching team's theme name or description
+        // Helper to normalize strings for comparison (removes spaces, underscores, etc)
+        const normalize = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const teamThemeNorm = normalize(team.theme);
+
+        // First try finding a LIVE quiz matching team's theme
         quiz = quizList.find(q => 
           q.status === 'LIVE' && (
-            q.title.toLowerCase().includes(team.theme.toLowerCase()) || 
-            (q.description && q.description.toLowerCase().includes(team.theme.toLowerCase()))
+            normalize(q.title).includes(teamThemeNorm) || 
+            normalize(q.description || '').includes(teamThemeNorm) ||
+            teamThemeNorm.includes(normalize(q.title))
           )
         );
-        // Try finding any quiz matching team's theme name or description
+
+        // Then try finding ANY status quiz matching team's theme
         if (!quiz) {
           quiz = quizList.find(q => 
-            q.title.toLowerCase().includes(team.theme.toLowerCase()) || 
-            (q.description && q.description.toLowerCase().includes(team.theme.toLowerCase()))
+            normalize(q.title).includes(teamThemeNorm) || 
+            normalize(q.description || '').includes(teamThemeNorm) ||
+            teamThemeNorm.includes(normalize(q.title))
           );
+        }
+
+        // STRICT MODE: If team has a theme but we couldn't find a matching quiz, block them.
+        if (!quiz) {
+          setError(`No quiz section found for your theme (${team.theme}). Please contact the organizer.`);
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Fallback for teams WITHOUT a theme (if applicable)
+        if (quizList && quizList.length > 0) {
+          quiz = quizList.find(q => q.status === 'LIVE') || quizList[0];
         }
       }
 
-      // Fallback to active LIVE quiz or latest quiz
-      if (!quiz && quizList && quizList.length > 0) {
-        quiz = quizList.find(q => q.status === 'LIVE') || quizList[0];
-      }
-
       if (!quiz) {
-        setError('No quiz is currently available for your theme.');
+        setError('No quizzes are currently available.');
         setLoading(false);
         return;
       }
