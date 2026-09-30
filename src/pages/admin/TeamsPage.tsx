@@ -8,6 +8,7 @@ import type { TeamQuizSettings, Quiz } from '@/lib/types';
 interface TeamRow {
   team_id: string;
   team_name: string;
+  theme?: string;
   registration_status?: string;
   allowed_attempts: number;
   attempts_used: number;
@@ -114,6 +115,7 @@ export default function TeamsPage() {
         return {
           team_id: teamId,
           team_name: team.team_name || team.name || teamId,
+          theme: team.theme || '—',
           registration_status: team.status || team.registration_status || 'registered',
           allowed_attempts: s?.allowed_attempts ?? quizData?.default_allowed_attempts ?? 1,
           attempts_used: completedAttempts.length,
@@ -340,6 +342,7 @@ export default function TeamsPage() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left py-3 px-4 text-gray-600 font-medium">Team ID</th>
                 <th className="text-left py-3 px-4 text-gray-600 font-medium">Team Name</th>
+                <th className="text-left py-3 px-4 text-gray-600 font-medium">Theme</th>
                 <th className="text-left py-3 px-4 text-gray-600 font-medium">Status</th>
                 <th className="text-center py-3 px-4 text-gray-600 font-medium">Allowed</th>
                 <th className="text-center py-3 px-4 text-gray-600 font-medium">Used</th>
@@ -354,6 +357,7 @@ export default function TeamsPage() {
                 <tr key={team.team_id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-3 px-4 font-mono text-sm font-medium">{team.team_id}</td>
                   <td className="py-3 px-4">{team.team_name}</td>
+                  <td className="py-3 px-4 text-gray-600">{team.theme}</td>
                   <td className="py-3 px-4">
                     {team.is_disabled ? (
                       <Badge variant="expired">Disabled</Badge>
