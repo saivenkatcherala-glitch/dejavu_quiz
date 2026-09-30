@@ -367,26 +367,30 @@ export default function QuestionsPage() {
 
       {/* Select All & Bulk Actions Bar */}
       {questions.length > 0 && (
-        <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3 mb-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl px-4 py-3 mb-4 shadow-sm gap-3">
           <div className="flex items-center gap-3">
             <input
               type="checkbox"
               id="selectAll"
-              className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
+              className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
               checked={selectedIds.length === questions.length && questions.length > 0}
               onChange={toggleSelectAll}
             />
-            <label htmlFor="selectAll" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
-              Select All ({selectedIds.length}/{questions.length} selected)
+            <label htmlFor="selectAll" className="text-sm font-semibold text-gray-900 cursor-pointer select-none flex items-center gap-2">
+              Select All Questions
+              <span className="text-xs font-medium px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">
+                {selectedIds.length} of {questions.length} selected
+              </span>
             </label>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             {selectedIds.length > 0 && (
               <Button
                 variant="danger"
                 size="sm"
                 onClick={() => setBulkDeleteConfirm(true)}
+                className="shadow-sm"
               >
                 <Trash2 className="w-4 h-4 mr-1.5" />
                 Delete Selected ({selectedIds.length})
@@ -410,36 +414,43 @@ export default function QuestionsPage() {
         {questions.map((q, index) => {
           const isSelected = selectedIds.includes(q.id);
           return (
-            <Card key={q.id} className={isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50/20' : ''}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 mt-1 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer"
-                  checked={isSelected}
-                  onChange={() => toggleSelect(q.id)}
-                />
-                <div className="flex-1">
+            <Card
+              key={q.id}
+              className={`transition-all ${
+                isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50/30 border-indigo-200' : 'hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-start gap-4">
+                <div className="pt-1">
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(q.id)}
+                  />
+                </div>
+                <div className="flex-1 cursor-pointer" onClick={() => toggleSelect(q.id)}>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-sm font-medium text-indigo-600">Q{index + 1}</span>
+                    <span className="text-sm font-bold text-indigo-600">Q{index + 1}</span>
                     <span className="text-xs text-gray-400">|</span>
-                    <span className="text-xs text-gray-500">{q.marks} mark{q.marks !== 1 ? 's' : ''}</span>
+                    <span className="text-xs font-medium text-gray-600">{q.marks} mark{q.marks !== 1 ? 's' : ''}</span>
                     {q.negative_marks > 0 && (
-                      <span className="text-xs text-red-500">-{q.negative_marks}</span>
+                      <span className="text-xs font-semibold text-red-500">-{q.negative_marks}</span>
                     )}
                   </div>
-                  <p className="text-gray-900">{q.question_text}</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
+                  <p className="text-gray-900 font-medium">{q.question_text}</p>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {(['A', 'B', 'C', 'D'] as OptionLetter[]).map(opt => {
                       const optionText = q[`option_${opt.toLowerCase()}` as keyof Question] as string;
                       const isCorrect = q.correct_option === opt;
                       return (
                         <div
                           key={opt}
-                          className={`px-3 py-1.5 rounded-lg text-sm ${
-                            isCorrect ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-600'
+                          className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                            isCorrect ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 font-medium' : 'bg-gray-50 text-gray-700'
                           }`}
                         >
-                          <span className="font-medium">{opt}.</span> {optionText}
+                          <span className="font-bold mr-1.5">{opt}.</span> {optionText}
                         </div>
                       );
                     })}
