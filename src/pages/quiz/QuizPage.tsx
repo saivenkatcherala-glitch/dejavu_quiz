@@ -43,7 +43,7 @@ export default function QuizPage() {
       setTimeout(() => setViolationPopup(prev => ({ ...prev, visible: false })), 5000);
     },
     (phoneCount: number) => {
-      if (phoneCount > 1 && !submitting && !submitted) {
+      if (phoneCount >= 3 && !submitting && !submitted) {
         handleAutoSubmit('phone_detected_twice');
       }
     }

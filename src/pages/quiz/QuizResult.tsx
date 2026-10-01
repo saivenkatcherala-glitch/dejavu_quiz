@@ -134,7 +134,7 @@ export default function QuizResult() {
               {reason === 'phone_detected_twice'
                 ? 'Your quiz was automatically submitted and locked because a mobile phone was detected multiple times.'
                 : reason === 'violation_limit_reached'
-                  ? `You exceeded the violation limit (${quizInfo?.violation_limit || 5}).`
+                  ? `You exceeded the violation limit (${quizInfo?.violation_limit || 3}).`
                   : `Team: ${session?.teamName}`}
             </p>
 
