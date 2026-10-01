@@ -69,7 +69,7 @@ export default function QuizLogin() {
         return;
       }
 
-      // Always fetch ALL LIVE quizzes - let participant choose their theme
+      // Fetch all LIVE quizzes
       const { data: quizList, error: quizError } = await supabase
         .from('quizzes')
         .select('*')
@@ -82,9 +82,26 @@ export default function QuizLogin() {
         return;
       }
 
+      // Try to auto-match quiz based on team's theme from Supabase
+      let autoSelectedId = '';
+      if (team.theme) {
+        const normalize = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const teamTheme = normalize(team.theme);
+        const matched = quizList.find(q => {
+          const titleNorm = normalize(q.title);
+          const descNorm = normalize(q.description || '');
+          return (
+            (titleNorm && titleNorm.includes(teamTheme)) ||
+            (descNorm && descNorm.includes(teamTheme)) ||
+            (teamTheme && teamTheme.includes(titleNorm) && titleNorm.length > 3)
+          );
+        });
+        if (matched) autoSelectedId = matched.id;
+      }
+
       setQuizzes(quizList);
-      // Default to first quiz if only one available
-      setSelectedQuizId(quizList.length === 1 ? quizList[0].id : '');
+      // Auto-select if we matched a theme, or if there's only one quiz
+      setSelectedQuizId(autoSelectedId || (quizList.length === 1 ? quizList[0].id : ''));
 
       // Success (verification step)
       const name = team.team_name || team.name || trimmedId;

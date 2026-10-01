@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Button, Input, Card, Badge, Modal, ConfirmDialog, Spinner, Toast } from '@/components/ui';
-import { Search, Eye, Plus, Minus, RotateCcw, Ban, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Search, Eye, Plus, Minus, RotateCcw, Ban, CheckCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import type { TeamQuizSettings, Quiz } from '@/lib/types';
 
 interface TeamRow {
@@ -31,7 +31,7 @@ export default function TeamsPage() {
   const [newAttemptLimit, setNewAttemptLimit] = useState('');
   const [confirmAction, setConfirmAction] = useState<{
     teamId: string;
-    action: 'disable' | 'enable' | 'reset' | 'grant';
+    action: 'disable' | 'enable' | 'reset' | 'grant' | 'delete_attempts';
     title: string;
     message: string;
   } | null>(null);
@@ -290,6 +290,34 @@ export default function TeamsPage() {
     }
   }
 
+  async function handleDeleteAttempts(teamId: string) {
+    setActionLoading(true);
+    try {
+      // Get all attempts for this team
+      const { data: attempts } = await supabase
+        .from('quiz_attempts')
+        .select('id')
+        .eq('team_id', teamId);
+
+      if (attempts && attempts.length > 0) {
+        const attemptIds = attempts.map(a => a.id);
+        // Delete all violations linked to these attempts
+        await supabase.from('violations').delete().in('attempt_id', attemptIds);
+        // Delete all attempts
+        await supabase.from('quiz_attempts').delete().eq('team_id', teamId);
+      }
+
+      await logAction('Deleted all attempts', 'team', teamId);
+      setToast({ message: `All attempts deleted for ${teamId} — they can now restart fresh`, type: 'success' });
+      loadTeams();
+    } catch (err) {
+      setToast({ message: 'Failed to delete attempts', type: 'error' });
+    } finally {
+      setActionLoading(false);
+      setConfirmAction(null);
+    }
+  }
+
   async function loadTeamDetails(teamId: string) {
     setViewTeam(teamId);
     const { data: attempts } = await supabase
@@ -423,6 +451,18 @@ export default function TeamsPage() {
                       >
                         <RotateCcw className="w-4 h-4" />
                       </button>
+                      <button
+                        onClick={() => setConfirmAction({
+                          teamId: team.team_id,
+                          action: 'delete_attempts',
+                          title: 'Delete All Attempts',
+                          message: `Permanently delete ALL attempts and violations for ${team.team_name}? They will be able to restart fresh and re-select their theme. This cannot be undone.`,
+                        })}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete All Attempts (Restart)"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                       {team.is_disabled ? (
                         <button
                           onClick={() => setConfirmAction({
@@ -501,10 +541,11 @@ export default function TeamsPage() {
             else if (confirmAction.action === 'disable') handleDisableTeam(confirmAction.teamId);
             else if (confirmAction.action === 'enable') handleEnableTeam(confirmAction.teamId);
             else if (confirmAction.action === 'reset') handleResetAttempt(confirmAction.teamId);
+            else if (confirmAction.action === 'delete_attempts') handleDeleteAttempts(confirmAction.teamId);
           }}
           title={confirmAction.title}
           message={confirmAction.message}
-          variant={confirmAction.action === 'disable' ? 'danger' : 'primary'}
+          variant={confirmAction.action === 'disable' || confirmAction.action === 'delete_attempts' ? 'danger' : 'primary'}
           loading={actionLoading}
         />
       )}
