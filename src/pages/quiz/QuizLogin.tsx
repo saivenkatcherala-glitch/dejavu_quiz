@@ -100,8 +100,16 @@ export default function QuizLogin() {
       }
 
       setQuizzes(quizList);
-      // Auto-select if we matched a theme, or if there's only one quiz
-      setSelectedQuizId(autoSelectedId || (quizList.length === 1 ? quizList[0].id : ''));
+      
+      const finalQuizId = autoSelectedId || (quizList.length === 1 ? quizList[0].id : '');
+      
+      if (!finalQuizId) {
+        setError(`No matching quiz found for your assigned theme (${team.theme || 'None'}). Please contact the organizer.`);
+        setLoading(false);
+        return;
+      }
+      
+      setSelectedQuizId(finalQuizId);
 
       // Success (verification step)
       const name = team.team_name || team.name || trimmedId;
@@ -222,22 +230,15 @@ export default function QuizLogin() {
                 <h2 className="text-2xl font-bold text-gray-900 mt-1">Welcome, {teamName}</h2>
               </div>
               
-              <div className="text-left mt-6 mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select your Theme / Quiz
-                </label>
-                <select
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm"
-                  value={selectedQuizId}
-                  onChange={(e) => setSelectedQuizId(e.target.value)}
-                >
-                  <option value="" disabled>-- Select your theme --</option>
-                  {quizzes.map(q => (
-                    <option key={q.id} value={q.id}>{q.title}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-orange-600 mt-2 font-medium">
-                  ⚠️ You can only attempt ONE theme. Once you proceed, you cannot switch.
+              <div className="text-left mt-6 mb-4 p-4 bg-indigo-50 rounded-lg border border-indigo-100">
+                <p className="text-sm font-medium text-indigo-900 mb-1">
+                  Your assigned quiz:
+                </p>
+                <p className="text-lg font-bold text-indigo-700">
+                  {quizzes.find(q => q.id === selectedQuizId)?.title || 'Loading...'}
+                </p>
+                <p className="text-xs text-orange-600 mt-3 font-medium">
+                  ⚠️ You can only attempt this theme once.
                 </p>
               </div>
 
