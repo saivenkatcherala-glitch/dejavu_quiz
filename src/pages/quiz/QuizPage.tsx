@@ -24,7 +24,6 @@ export default function QuizPage() {
   const [submitted, setSubmitted] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [reconnecting, setReconnecting] = useState(false);
-  const [warningMessage, setWarningMessage] = useState('');
 
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -33,13 +32,15 @@ export default function QuizPage() {
   const attemptIdRef = useRef<string>('');
 
   // Proctoring
+  const [violationPopup, setViolationPopup] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+
   const { violationCount } = useProctoring(
     attemptIdRef.current,
     session?.teamId || '',
     quiz?.proctoring_enabled ?? false,
     (message: string) => {
-      setWarningMessage(message);
-      setTimeout(() => setWarningMessage(''), 4000);
+      setViolationPopup({ message, visible: true });
+      setTimeout(() => setViolationPopup(prev => ({ ...prev, visible: false })), 5000);
     }
   );
 
@@ -325,7 +326,7 @@ export default function QuizPage() {
       navigate('/quiz/result');
     } catch (err: any) {
       setSubmitting(false);
-      setWarningMessage('Failed to submit. Please try again.');
+      setViolationPopup({ message: 'Failed to submit. Please try again.', visible: true });
     }
   }
 
@@ -399,6 +400,14 @@ export default function QuizPage() {
             </div>
           )}
 
+          {/* Violation Counter */}
+          {quiz?.proctoring_enabled && violationCount > 0 && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-semibold">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {violationCount} violation{violationCount !== 1 ? 's' : ''}
+            </div>
+          )}
+
           {/* Timer */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-lg font-bold ${
             isTimeCritical
@@ -413,11 +422,18 @@ export default function QuizPage() {
         </div>
       </header>
 
-      {/* Warning Banner */}
-      {warningMessage && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-          <span className="text-sm text-amber-800">{warningMessage}</span>
+      {/* Violation Popup Overlay */}
+      {violationPopup.visible && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="bg-red-600 text-white px-8 py-5 rounded-2xl shadow-2xl max-w-md mx-4 flex items-start gap-4 animate-bounce-once pointer-events-auto">
+            <AlertTriangle className="w-7 h-7 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-lg">Violation Detected!</p>
+              <p className="text-red-100 text-sm mt-1">{violationPopup.message}</p>
+              <p className="text-red-200 text-xs mt-2">Total violations: {violationCount}</p>
+            </div>
+            <button onClick={() => setViolationPopup(prev => ({ ...prev, visible: false }))} className="ml-auto text-red-200 hover:text-white text-xl leading-none">&times;</button>
+          </div>
         </div>
       )}
 

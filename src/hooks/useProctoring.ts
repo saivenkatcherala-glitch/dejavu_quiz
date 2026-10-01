@@ -2,6 +2,34 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { ViolationType, Severity } from '@/lib/types';
 
+// Load TF.js + COCO-SSD from CDN (no npm install needed)
+let cocoSsdPromise: Promise<any> | null = null;
+async function getCocoSsd(): Promise<any> {
+  if (!cocoSsdPromise) {
+    cocoSsdPromise = new Promise((resolve, reject) => {
+      // Load TF.js
+      const tfScript = document.createElement('script');
+      tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js';
+      tfScript.onload = () => {
+        // Then load COCO-SSD
+        const cocoScript = document.createElement('script');
+        cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js';
+        cocoScript.onload = async () => {
+          try {
+            const model = await (window as any).cocoSsd.load();
+            resolve(model);
+          } catch (e) { reject(e); }
+        };
+        cocoScript.onerror = reject;
+        document.head.appendChild(cocoScript);
+      };
+      tfScript.onerror = reject;
+      document.head.appendChild(tfScript);
+    });
+  }
+  return cocoSsdPromise;
+}
+
 const DEBOUNCE_MS = 5000; // 5 seconds between same-type violations
 
 interface UseProctor {
@@ -186,25 +214,25 @@ export function useProctoring(
         await video.play();
         videoRef.current = video;
 
-        // Simple face detection using Canvas + basic checks
-        // For production, integrate MediaPipe FaceDetection
-        // This provides camera-enabled status detection
+        // Try to load COCO-SSD for phone detection (non-blocking)
+        let detector: any = null;
+        getCocoSsd().then(m => { detector = m; }).catch(() => { /* silently skip if fails */ });
 
+        // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
-        const NO_FACE_THRESHOLD = 3; // 3 checks = ~15 seconds of no face
+        const NO_FACE_THRESHOLD = 3;
 
         faceCheckInterval.current = setInterval(async () => {
           if (!videoRef.current || videoRef.current.paused) {
             noFaceCounter++;
             if (noFaceCounter >= NO_FACE_THRESHOLD) {
               recordViolation('CAMERA_DISABLED', 'high');
-              onWarning('⚠ Camera appears to be disabled!');
+              onWarning('Camera appears to be disabled!');
               noFaceCounter = 0;
             }
             return;
           }
 
-          // Check if video is actually streaming
           const canvas = document.createElement('canvas');
           canvas.width = 320;
           canvas.height = 240;
@@ -214,12 +242,11 @@ export function useProctoring(
             const imageData = ctx.getImageData(0, 0, 320, 240);
             const data = imageData.data;
 
-            // Check if the image is all black/frozen (camera covered or disabled)
             let totalBrightness = 0;
             let samePixelCount = 0;
             const firstR = data[0], firstG = data[1], firstB = data[2];
 
-            for (let i = 0; i < data.length; i += 4 * 100) { // Sample every 100th pixel
+            for (let i = 0; i < data.length; i += 4 * 100) {
               totalBrightness += data[i] + data[i + 1] + data[i + 2];
               if (data[i] === firstR && data[i + 1] === firstG && data[i + 2] === firstB) {
                 samePixelCount++;
@@ -233,7 +260,7 @@ export function useProctoring(
               noFaceCounter++;
               if (noFaceCounter >= NO_FACE_THRESHOLD) {
                 recordViolation('CAMERA_DISABLED', 'high', { reason: 'black_frame' });
-                onWarning('⚠ Camera appears to be covered or disabled!');
+                onWarning('Camera appears to be covered or disabled!');
                 noFaceCounter = 0;
               }
             } else if (samePixelCount > sampleCount * 0.95) {
@@ -245,11 +272,25 @@ export function useProctoring(
             } else {
               noFaceCounter = 0;
             }
+
+            // Mobile phone detection using COCO-SSD (if model loaded)
+            if (detector && videoRef.current) {
+              try {
+                const predictions = await detector.detect(videoRef.current);
+                const phoneDetected = predictions.some((p: any) =>
+                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.5
+                );
+                if (phoneDetected) {
+                  recordViolation('COPY_ATTEMPT', 'high', { reason: 'mobile_phone_detected' });
+                  onWarning('Mobile phone detected in camera! Please remove it immediately.');
+                }
+              } catch { /* skip if detection fails */ }
+            }
           }
-        }, 5000); // Check every 5 seconds
+        }, 5000);
       } catch (err) {
         recordViolation('CAMERA_DISABLED', 'high', { reason: 'permission_denied' });
-        onWarning('⚠ Camera access was denied!');
+        onWarning('Camera access was denied!');
       }
     }
 
