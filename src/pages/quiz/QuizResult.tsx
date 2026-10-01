@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useTeamSession } from '@/contexts/TeamSessionContext';
 import { Card, Spinner, Button } from '@/components/ui';
@@ -9,9 +9,13 @@ import { CheckCircle, XCircle, MinusCircle, Clock, Trophy } from 'lucide-react';
 export default function QuizResult() {
   const { session, clearSession } = useTeamSession();
   const navigate = useNavigate();
+  const location = useLocation();
   const [attempt, setAttempt] = useState<QuizAttempt | null>(null);
   const [loading, setLoading] = useState(true);
   const [showScore, setShowScore] = useState(false);
+  const [quizInfo, setQuizInfo] = useState<any>(null);
+
+  const reason = location.state?.reason;
 
   useEffect(() => {
     if (!session?.teamId) {
@@ -35,6 +39,7 @@ export default function QuizResult() {
         return;
       }
 
+      setQuizInfo(quizData);
       setShowScore(quizData.show_score_after_submit);
 
       // Get latest completed attempt
@@ -110,12 +115,26 @@ export default function QuizResult() {
         <Card>
           <div className="text-center">
             {/* Status */}
-            <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-              <Trophy className="w-10 h-10 text-emerald-600" />
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
+              reason === 'violation_limit_reached' ? 'bg-red-100' : 'bg-emerald-100'
+            }`}>
+              {reason === 'violation_limit_reached' ? (
+                <XCircle className="w-10 h-10 text-red-600" />
+              ) : (
+                <Trophy className="w-10 h-10 text-emerald-600" />
+              )}
             </div>
 
-            <h2 className="text-xl font-bold text-gray-900 mb-1">Quiz Submitted!</h2>
-            <p className="text-gray-500 mb-6">Team: {session?.teamName}</p>
+            <h2 className={`text-xl font-bold mb-1 ${
+              reason === 'violation_limit_reached' ? 'text-red-700' : 'text-gray-900'
+            }`}>
+              {reason === 'violation_limit_reached' ? 'Quiz Locked' : 'Quiz Submitted!'}
+            </h2>
+            <p className="text-gray-500 mb-6">
+              {reason === 'violation_limit_reached' 
+                ? `You exceeded the violation limit (${quizInfo?.violation_limit || 5}).`
+                : `Team: ${session?.teamName}`}
+            </p>
 
             {showScore ? (
               <>

@@ -56,6 +56,8 @@ export interface Quiz {
   allow_previous_question: boolean;
   auto_submit_on_expiry: boolean;
   proctoring_enabled: boolean;
+  violation_limit_enabled: boolean;
+  violation_limit: number;
   scheduled_start: string | null;
   scheduled_end: string | null;
   created_at: string;

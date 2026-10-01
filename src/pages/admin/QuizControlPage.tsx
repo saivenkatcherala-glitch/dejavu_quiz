@@ -30,6 +30,8 @@ export default function QuizControlPage() {
     allow_previous_question: true,
     auto_submit_on_expiry: true,
     proctoring_enabled: true,
+    violation_limit_enabled: false,
+    violation_limit: 5,
   });
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
@@ -77,6 +79,8 @@ export default function QuizControlPage() {
         allow_previous_question: target.allow_previous_question,
         auto_submit_on_expiry: target.auto_submit_on_expiry,
         proctoring_enabled: target.proctoring_enabled,
+        violation_limit_enabled: target.violation_limit_enabled || false,
+        violation_limit: target.violation_limit || 5,
       });
 
       const { count } = await supabase
@@ -365,6 +369,7 @@ export default function QuizControlPage() {
             { key: 'show_correct_answers_after_submit', label: 'Show Correct Answers' },
             { key: 'auto_submit_on_expiry', label: 'Auto Submit on Expiry' },
             { key: 'proctoring_enabled', label: 'Proctoring Enabled' },
+            { key: 'violation_limit_enabled', label: 'Enable Violation Limit' },
           ].map(({ key, label }) => (
             <label key={key} className="flex items-center gap-3 text-sm">
               <input
@@ -378,6 +383,25 @@ export default function QuizControlPage() {
             </label>
           ))}
         </div>
+        
+        {form.violation_limit_enabled && (
+          <div className="mt-6 border-t pt-4">
+            <div className="max-w-xs">
+              <Input
+                label="Maximum Violations Allowed"
+                type="number"
+                value={String(form.violation_limit)}
+                onChange={e => setForm({ ...form, violation_limit: parseInt(e.target.value) || 1 })}
+                disabled={!editMode}
+                min={1}
+                step={1}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Quiz will auto-submit and lock if the team exceeds this many violations.
+              </p>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Create New Quiz Modal */}

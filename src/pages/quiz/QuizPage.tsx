@@ -44,6 +44,19 @@ export default function QuizPage() {
     }
   );
 
+  // Auto-submit if violation limit reached
+  useEffect(() => {
+    if (
+      quiz?.violation_limit_enabled &&
+      quiz.violation_limit > 0 &&
+      violationCount >= quiz.violation_limit &&
+      !submitting &&
+      !submitted
+    ) {
+      handleAutoSubmit('violation_limit_reached');
+    }
+  }, [violationCount, quiz, submitting, submitted]);
+
   // =====================================================
   // INITIALIZATION
   // =====================================================
@@ -172,7 +185,7 @@ export default function QuizPage() {
 
       if (remaining <= 0) {
         // Time already expired, auto-submit
-        await handleAutoSubmit();
+        await handleAutoSubmit('time_expired');
         return;
       }
 
@@ -196,7 +209,7 @@ export default function QuizPage() {
       setTimeRemaining(remaining);
       if (remaining <= 0) {
         clearInterval(timerRef.current);
-        handleAutoSubmit();
+        handleAutoSubmit('time_expired');
       }
     }, 1000);
   }
@@ -330,7 +343,7 @@ export default function QuizPage() {
     }
   }
 
-  async function handleAutoSubmit() {
+  async function handleAutoSubmit(reason: 'time_expired' | 'violation_limit_reached' = 'time_expired') {
     try {
       await syncPendingAnswers();
       await supabase.rpc('submit_attempt', {
@@ -341,7 +354,7 @@ export default function QuizPage() {
     clearInterval(timerRef.current);
     clearInterval(heartbeatRef.current);
     try { document.exitFullscreen?.(); } catch {}
-    navigate('/quiz/result');
+    navigate('/quiz/result', { state: { reason } });
   }
 
   // =====================================================
