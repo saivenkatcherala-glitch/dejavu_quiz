@@ -16,7 +16,7 @@ async function getCocoSsd(): Promise<any> {
         cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js';
         cocoScript.onload = async () => {
           try {
-            const model = await (window as any).cocoSsd.load();
+            const model = await (window as any).cocoSsd.load({ base: 'mobilenet_v2' });
             resolve(model);
           } catch (e) { reject(e); }
         };
@@ -210,8 +210,8 @@ export function useProctoring(
 
         // Create a hidden video element for face detection
         const video = document.createElement('video');
-        video.width = 320;
-        video.height = 240;
+        video.width = 640;
+        video.height = 480;
         video.srcObject = stream;
         video.muted = true;
         video.playsInline = true;
@@ -238,12 +238,12 @@ export function useProctoring(
           }
 
           const canvas = document.createElement('canvas');
-          canvas.width = 320;
-          canvas.height = 240;
+          canvas.width = 640;
+          canvas.height = 480;
           const ctx = canvas.getContext('2d');
           if (ctx) {
-            ctx.drawImage(videoRef.current, 0, 0, 320, 240);
-            const imageData = ctx.getImageData(0, 0, 320, 240);
+            ctx.drawImage(videoRef.current, 0, 0, 640, 480);
+            const imageData = ctx.getImageData(0, 0, 640, 480);
             const data = imageData.data;
 
             let totalBrightness = 0;
@@ -282,7 +282,7 @@ export function useProctoring(
               try {
                 const predictions = await detector.detect(canvas);
                 const phoneDetected = predictions.some((p: any) =>
-                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.5
+                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.45
                 );
                 if (phoneDetected) {
                   phoneDetectionCount.current += 1;
