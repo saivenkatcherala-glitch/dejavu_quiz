@@ -116,9 +116,9 @@ export default function QuizResult() {
           <div className="text-center">
             {/* Status */}
             <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 ${
-              reason === 'violation_limit_reached' ? 'bg-red-100' : 'bg-emerald-100'
+              reason === 'violation_limit_reached' || reason === 'phone_detected_twice' ? 'bg-red-100' : 'bg-emerald-100'
             }`}>
-              {reason === 'violation_limit_reached' ? (
+              {reason === 'violation_limit_reached' || reason === 'phone_detected_twice' ? (
                 <XCircle className="w-10 h-10 text-red-600" />
               ) : (
                 <Trophy className="w-10 h-10 text-emerald-600" />
@@ -126,14 +126,16 @@ export default function QuizResult() {
             </div>
 
             <h2 className={`text-xl font-bold mb-1 ${
-              reason === 'violation_limit_reached' ? 'text-red-700' : 'text-gray-900'
+              reason === 'violation_limit_reached' || reason === 'phone_detected_twice' ? 'text-red-700' : 'text-gray-900'
             }`}>
-              {reason === 'violation_limit_reached' ? 'Quiz Locked' : 'Quiz Submitted!'}
+              {reason === 'violation_limit_reached' || reason === 'phone_detected_twice' ? 'Quiz Locked' : 'Quiz Submitted!'}
             </h2>
-            <p className="text-gray-500 mb-6">
-              {reason === 'violation_limit_reached' 
-                ? `You exceeded the violation limit (${quizInfo?.violation_limit || 5}).`
-                : `Team: ${session?.teamName}`}
+            <p className="text-gray-500 mb-6 px-4">
+              {reason === 'phone_detected_twice'
+                ? 'Your quiz was automatically submitted and locked because a mobile phone was detected multiple times.'
+                : reason === 'violation_limit_reached'
+                  ? `You exceeded the violation limit (${quizInfo?.violation_limit || 5}).`
+                  : `Team: ${session?.teamName}`}
             </p>
 
             {showScore ? (

@@ -40,9 +40,11 @@ export function useProctoring(
   attemptId: string,
   teamId: string,
   enabled: boolean,
-  onWarning: (message: string) => void
+  onWarning: (message: string) => void,
+  onPhoneDetected?: (count: number) => void
 ): UseProctor {
   const [violationCount, setViolationCount] = useState(0);
+  const phoneDetectionCount = useRef(0);
   const lastViolation = useRef<Map<string, number>>(new Map());
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceCheckInterval = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -281,8 +283,12 @@ export function useProctoring(
                   ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.5
                 );
                 if (phoneDetected) {
+                  phoneDetectionCount.current += 1;
                   recordViolation('COPY_ATTEMPT', 'high', { reason: 'mobile_phone_detected' });
                   onWarning('Mobile phone detected in camera! Please remove it immediately.');
+                  if (onPhoneDetected) {
+                    onPhoneDetected(phoneDetectionCount.current);
+                  }
                 }
               } catch { /* skip if detection fails */ }
             }

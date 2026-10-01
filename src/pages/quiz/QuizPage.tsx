@@ -41,6 +41,11 @@ export default function QuizPage() {
     (message: string) => {
       setViolationPopup({ message, visible: true });
       setTimeout(() => setViolationPopup(prev => ({ ...prev, visible: false })), 5000);
+    },
+    (phoneCount: number) => {
+      if (phoneCount > 1 && !submitting && !submitted) {
+        handleAutoSubmit('phone_detected_twice');
+      }
     }
   );
 
@@ -343,7 +348,7 @@ export default function QuizPage() {
     }
   }
 
-  async function handleAutoSubmit(reason: 'time_expired' | 'violation_limit_reached' = 'time_expired') {
+  async function handleAutoSubmit(reason: 'time_expired' | 'violation_limit_reached' | 'phone_detected_twice' = 'time_expired') {
     try {
       await syncPendingAnswers();
       await supabase.rpc('submit_attempt', {
