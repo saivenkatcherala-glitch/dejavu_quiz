@@ -24,6 +24,7 @@ const QuizControlPage = React.lazy(() => import('@/pages/admin/QuizControlPage')
 const AttemptsPage = React.lazy(() => import('@/pages/admin/AttemptsPage'));
 const ViolationsPage = React.lazy(() => import('@/pages/admin/ViolationsPage'));
 const LiveMonitorPage = React.lazy(() => import('@/pages/admin/LiveMonitorPage'));
+const LeaderboardPage = React.lazy(() => import('@/pages/admin/LeaderboardPage'));
 const ResultsPage = React.lazy(() => import('@/pages/admin/ResultsPage'));
 const ActivityLogPage = React.lazy(() => import('@/pages/admin/ActivityLogPage'));
 
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="attempts" element={<AttemptsPage />} />
         <Route path="violations" element={<ViolationsPage />} />
         <Route path="live" element={<LiveMonitorPage />} />
+        <Route path="leaderboard" element={<LeaderboardPage />} />
         <Route path="results" element={<ResultsPage />} />
         <Route path="activity" element={<ActivityLogPage />} />
       </Route>

@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   ClipboardList,
+  Trophy,
 } from 'lucide-react';
 
 const navItems = [
@@ -24,6 +25,7 @@ const navItems = [
   { to: '/admin/attempts', icon: ClipboardList, label: 'Attempts' },
   { to: '/admin/violations', icon: AlertTriangle, label: 'Violations' },
   { to: '/admin/live', icon: Radio, label: 'Live Monitor' },
+  { to: '/admin/leaderboard', icon: Trophy, label: 'Leaderboard' },
   { to: '/admin/results', icon: BarChart3, label: 'Results' },
   { to: '/admin/activity', icon: History, label: 'Activity Log' },
 ];

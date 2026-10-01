@@ -189,7 +189,24 @@ export default function QuizPage() {
       (savedAnswers || []).forEach(a => {
         answerMap.set(a.question_id, a.selected_option as OptionLetter | null);
       });
+
+      // Restore offline answers from localStorage if present
+      const localAnswersRaw = localStorage.getItem(`dejavu_answers_${attemptData.id}`);
+      if (localAnswersRaw) {
+        try {
+          const localAnswers = new Map<string, OptionLetter | null>(JSON.parse(localAnswersRaw));
+          localAnswers.forEach((val, key) => {
+            answerMap.set(key, val);
+            // Queue for sync to ensure server gets it
+            pendingSaves.current.set(key, val);
+          });
+        } catch (e) {
+          console.error('Failed to parse local answers', e);
+        }
+      }
+
       setAnswers(answerMap);
+      syncPendingAnswers(); // Try to sync immediately if we had offline answers
 
       // Start timer
       const remaining = getRemainingSeconds(attemptData.expires_at);
@@ -285,6 +302,10 @@ export default function QuizPage() {
       } else {
         next.set(q.id, newAnswer);
       }
+      // Save local backup immediately
+      if (attemptIdRef.current) {
+        localStorage.setItem(`dejavu_answers_${attemptIdRef.current}`, JSON.stringify(Array.from(next.entries())));
+      }
       return next;
     });
 
@@ -344,6 +365,7 @@ export default function QuizPage() {
       setSubmitted(true);
       clearInterval(timerRef.current);
       clearInterval(heartbeatRef.current);
+      localStorage.removeItem(`dejavu_answers_${attemptIdRef.current}`);
 
       // Exit fullscreen
       try { document.exitFullscreen?.(); } catch {}
@@ -365,6 +387,7 @@ export default function QuizPage() {
     } catch {}
     clearInterval(timerRef.current);
     clearInterval(heartbeatRef.current);
+    localStorage.removeItem(`dejavu_answers_${attemptIdRef.current}`);
     try { document.exitFullscreen?.(); } catch {}
     navigate('/quiz/result', { state: { reason } });
   }
