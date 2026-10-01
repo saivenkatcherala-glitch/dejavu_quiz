@@ -210,6 +210,8 @@ export function useProctoring(
 
         // Create a hidden video element for face detection
         const video = document.createElement('video');
+        video.width = 320;
+        video.height = 240;
         video.srcObject = stream;
         video.muted = true;
         video.playsInline = true;
@@ -276,9 +278,9 @@ export function useProctoring(
             }
 
             // Mobile phone detection using COCO-SSD (if model loaded)
-            if (detector && videoRef.current) {
+            if (detector && canvas) {
               try {
-                const predictions = await detector.detect(videoRef.current);
+                const predictions = await detector.detect(canvas);
                 const phoneDetected = predictions.some((p: any) =>
                   ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.5
                 );
@@ -290,7 +292,9 @@ export function useProctoring(
                     onPhoneDetected(phoneDetectionCount.current);
                   }
                 }
-              } catch { /* skip if detection fails */ }
+              } catch (e) {
+                console.error("COCO-SSD Detection error:", e);
+              }
             }
           }
         }, 5000);
