@@ -163,14 +163,33 @@ export function useProctoring(
       recordViolation('RIGHT_CLICK', 'low');
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Block Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+P, PrintScreen
+      if (
+        (e.ctrlKey || e.metaKey) && 
+        (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'p' || e.key === 'C' || e.key === 'V' || e.key === 'X' || e.key === 'P')
+      ) {
+        e.preventDefault();
+        recordViolation('COPY_ATTEMPT', 'low');
+        onWarning('⚠ Keyboard shortcuts are disabled during the quiz.');
+      }
+      if (e.key === 'PrintScreen') {
+        e.preventDefault();
+        recordViolation('COPY_ATTEMPT', 'high', { reason: 'screenshot_attempt' });
+        onWarning('⚠ Screenshots are strictly prohibited!');
+      }
+    };
+
     document.addEventListener('copy', handleCopy);
     document.addEventListener('paste', handlePaste);
     document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('keydown', handleKeyDown);
 
     return () => {
       document.removeEventListener('copy', handleCopy);
       document.removeEventListener('paste', handlePaste);
       document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [enabled, recordViolation, onWarning]);
 
@@ -224,6 +243,7 @@ export function useProctoring(
 
         // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
+        let missingPersonCounter = 0;
         const NO_FACE_THRESHOLD = 3;
 
         faceCheckInterval.current = setInterval(async () => {
@@ -284,6 +304,20 @@ export function useProctoring(
                 const phoneDetected = predictions.some((p: any) =>
                   ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.45
                 );
+                
+                // Check for missing person (walked away)
+                const personCount = predictions.filter((p: any) => p.class === 'person' && p.score > 0.5).length;
+                if (personCount === 0) {
+                  missingPersonCounter++;
+                  if (missingPersonCounter >= 3) { // 6 seconds missing
+                    recordViolation('CAMERA_DISABLED', 'high', { reason: 'walked_away' });
+                    onWarning('⚠ No person detected in camera! Please return to your seat.');
+                    missingPersonCounter = 0;
+                  }
+                } else {
+                  missingPersonCounter = 0;
+                }
+
                 if (phoneDetected) {
                   phoneDetectionCount.current += 1;
                   recordViolation('COPY_ATTEMPT', 'high', { reason: 'mobile_phone_detected' });

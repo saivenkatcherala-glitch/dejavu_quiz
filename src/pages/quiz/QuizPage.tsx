@@ -24,6 +24,7 @@ export default function QuizPage() {
   const [submitted, setSubmitted] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [reconnecting, setReconnecting] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(true);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -73,9 +74,15 @@ export default function QuizPage() {
     }
     initQuiz();
 
+    const handleFullscreen = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreen);
+
     return () => {
       clearInterval(timerRef.current);
       clearInterval(heartbeatRef.current);
+      document.removeEventListener('fullscreenchange', handleFullscreen);
     };
   }, []);
 
@@ -452,6 +459,24 @@ export default function QuizPage() {
             </div>
             <button onClick={() => setViolationPopup(prev => ({ ...prev, visible: false }))} className="ml-auto text-red-200 hover:text-white text-xl leading-none">&times;</button>
           </div>
+        </div>
+      )}
+
+      {/* Fullscreen Overlay Block */}
+      {!isFullscreen && !submitted && (
+        <div className="fixed inset-0 z-[100] bg-gray-900/95 flex flex-col items-center justify-center text-white px-4">
+          <AlertTriangle className="w-20 h-20 text-red-500 mb-6" />
+          <h2 className="text-3xl font-bold mb-3 text-center">Fullscreen Required</h2>
+          <p className="text-lg text-gray-300 mb-8 max-w-lg text-center">
+            You have exited fullscreen mode. This has been recorded as a violation. You must return to fullscreen to continue the quiz.
+          </p>
+          <Button 
+            size="lg" 
+            onClick={() => document.documentElement.requestFullscreen().catch(() => {})}
+            className="text-lg px-8 py-4"
+          >
+            Return to Fullscreen
+          </Button>
         </div>
       )}
 
