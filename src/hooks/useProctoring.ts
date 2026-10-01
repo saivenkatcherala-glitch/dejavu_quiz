@@ -297,7 +297,7 @@ export function useProctoring(
               }
             }
           }
-        }, 5000);
+        }, 2000);
       } catch (err) {
         recordViolation('CAMERA_DISABLED', 'high', { reason: 'permission_denied' });
         onWarning('Camera access was denied!');
