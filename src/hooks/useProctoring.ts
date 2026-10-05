@@ -220,7 +220,11 @@ export function useProctoring(
 
     async function initFaceDetection() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        // Request higher resolution feed (HD) to catch objects further away
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+          audio: false 
+        });
 
         if (cancelled) {
           stream.getTracks().forEach(t => t.stop());
@@ -229,8 +233,8 @@ export function useProctoring(
 
         // Create a hidden video element for face detection
         const video = document.createElement('video');
-        video.width = 640;
-        video.height = 480;
+        video.width = 1280;
+        video.height = 720;
         video.srcObject = stream;
         video.muted = true;
         video.playsInline = true;
@@ -258,12 +262,12 @@ export function useProctoring(
           }
 
           const canvas = document.createElement('canvas');
-          canvas.width = 640;
-          canvas.height = 480;
+          canvas.width = 1280;
+          canvas.height = 720;
           const ctx = canvas.getContext('2d');
           if (ctx) {
-            ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-            const imageData = ctx.getImageData(0, 0, 640, 480);
+            ctx.drawImage(videoRef.current, 0, 0, 1280, 720);
+            const imageData = ctx.getImageData(0, 0, 1280, 720);
             const data = imageData.data;
 
             let totalBrightness = 0;
@@ -302,7 +306,7 @@ export function useProctoring(
               try {
                 const predictions = await detector.detect(canvas);
                 const phoneDetected = predictions.some((p: any) =>
-                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.45
+                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.35
                 );
                 
                 // Check for missing person (walked away)
