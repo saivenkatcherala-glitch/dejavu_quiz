@@ -30,6 +30,30 @@ async function getCocoSsd(): Promise<any> {
   return cocoSsdPromise;
 }
 
+// Load Blazeface for head pose / gaze tracking
+let blazefacePromise: Promise<any> | null = null;
+async function getBlazeface(): Promise<any> {
+  if (!blazefacePromise) {
+    blazefacePromise = new Promise((resolve, reject) => {
+      if (!(window as any).tf) {
+        reject(new Error('TF not loaded'));
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js';
+      script.onload = async () => {
+        try {
+          const model = await (window as any).blazeface.load();
+          resolve(model);
+        } catch (e) { reject(e); }
+      };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+  return blazefacePromise;
+}
+
 const DEBOUNCE_MS = 5000; // 5 seconds between same-type violations
 
 interface UseProctor {
@@ -245,6 +269,10 @@ export function useProctoring(
         let detector: any = null;
         getCocoSsd().then(m => { detector = m; }).catch(() => { /* silently skip if fails */ });
 
+        // Try to load Blazeface for gaze/head pose tracking (non-blocking)
+        let faceDetector: any = null;
+        getBlazeface().then(m => { faceDetector = m; }).catch(() => { /* silently skip if fails */ });
+
         // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
         let missingPersonCounter = 0;
@@ -332,6 +360,31 @@ export function useProctoring(
                 }
               } catch (e) {
                 console.error("COCO-SSD Detection error:", e);
+              }
+            }
+
+            // Gaze / Head Pose tracking using Blazeface (if model loaded)
+            if (faceDetector && videoRef.current) {
+              try {
+                const faces = await faceDetector.estimateFaces(videoRef.current, false);
+                if (faces.length > 0) {
+                  const face = faces[0];
+                  // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
+                  const rightEye = face.landmarks[0];
+                  const leftEye = face.landmarks[1];
+                  const nose = face.landmarks[2];
+                  
+                  // Y-coordinate increases as you go down the screen.
+                  const avgEyeY = (rightEye[1] + leftEye[1]) / 2;
+                  
+                  // If the nose is vertically higher than the eyes (or very close), head is heavily tilted down
+                  if (nose[1] <= avgEyeY + 15) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
+                    onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
+                  }
+                }
+              } catch (e) {
+                console.error("Blazeface Detection error:", e);
               }
             }
           }
