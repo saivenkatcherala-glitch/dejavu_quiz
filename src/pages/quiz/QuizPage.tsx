@@ -448,11 +448,20 @@ export default function QuizPage() {
             </div>
           )}
 
-          {/* Violation Counter */}
-          {quiz?.proctoring_enabled && violationCount > 0 && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-semibold">
+          {/* Violation Counter - Always visible when proctoring is on */}
+          {quiz?.proctoring_enabled && (
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-semibold ${
+              violationCount === 0
+                ? 'bg-emerald-100 text-emerald-700'
+                : violationCount < (quiz.violation_limit_enabled ? Math.floor(quiz.violation_limit * 0.7) : 999)
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-red-100 text-red-700 animate-pulse'
+            }`}>
               <AlertTriangle className="w-3.5 h-3.5" />
               {violationCount} violation{violationCount !== 1 ? 's' : ''}
+              {quiz.violation_limit_enabled && (
+                <span className="text-xs opacity-70">/ {quiz.violation_limit}</span>
+              )}
             </div>
           )}
 

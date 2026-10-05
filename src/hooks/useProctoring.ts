@@ -336,6 +336,13 @@ export function useProctoring(
         let missingPersonCounter = 0;
         const NO_FACE_THRESHOLD = 3;
 
+        // Temporal fusion counters - only fire violation after consecutive detections
+        let gazeDownCounter = 0;
+        let headTurnCounter = 0;
+        let eyeGazeDownCounter = 0;
+        let eyeGazeSideCounter = 0;
+        const TEMPORAL_THRESHOLD = 2; // Must be detected 2 consecutive times (4 seconds at 2s interval)
+
         faceCheckInterval.current = setInterval(async () => {
           if (!videoRef.current || videoRef.current.paused) {
             noFaceCounter++;
@@ -431,7 +438,6 @@ export function useProctoring(
                 const faces = await faceDetector.estimateFaces(videoRef.current, false);
                 if (faces.length > 0) {
                   const face = faces[0];
-                  // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
                   const rightEye = face.landmarks[0];
                   const leftEye = face.landmarks[1];
                   const nose = face.landmarks[2];
@@ -440,21 +446,36 @@ export function useProctoring(
                   const faceHeight = face.bottomRight[1] - face.topLeft[1];
                   const noseMouthDist = mouth[1] - nose[1];
                   
-                  // 1. Looking Down (Pitch)
+                  // 1. Looking Down (Pitch) - with temporal fusion
                   if (noseMouthDist < faceHeight * 0.07) {
-                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
-                    onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
+                    gazeDownCounter++;
+                    if (gazeDownCounter >= TEMPORAL_THRESHOLD) {
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
+                      onWarning('⚠ Head tilt detected! Please look up at the screen.');
+                      gazeDownCounter = 0;
+                    }
+                  } else {
+                    gazeDownCounter = 0;
                   }
                   
-                  // 2. Looking Left/Right (Yaw)
+                  // 2. Looking Left/Right (Yaw) - with temporal fusion
                   const eyeDistX = Math.abs(rightEye[0] - leftEye[0]);
                   const noseToRightEyeX = Math.abs(nose[0] - rightEye[0]);
                   const noseToLeftEyeX = Math.abs(nose[0] - leftEye[0]);
                   
                   if (noseToRightEyeX < eyeDistX * 0.2 || noseToLeftEyeX < eyeDistX * 0.2) {
-                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
-                    onWarning('⚠ Please face the screen. Looking away from the quiz is not permitted.');
+                    headTurnCounter++;
+                    if (headTurnCounter >= TEMPORAL_THRESHOLD) {
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
+                      onWarning('⚠ Head turn detected! Please face the screen.');
+                      headTurnCounter = 0;
+                    }
+                  } else {
+                    headTurnCounter = 0;
                   }
+                } else {
+                  gazeDownCounter = 0;
+                  headTurnCounter = 0;
                 }
               } catch (e) {
                 console.error("Blazeface Detection error:", e);
@@ -470,7 +491,6 @@ export function useProctoring(
                 if (result && result.faceBlendshapes && result.faceBlendshapes.length > 0) {
                   const blendshapes = result.faceBlendshapes[0].categories;
                   
-                  // Extract key blendshape scores
                   const getScore = (name: string) => {
                     const shape = blendshapes.find((b: any) => b.categoryName === name);
                     return shape ? shape.score : 0;
@@ -483,26 +503,44 @@ export function useProctoring(
                   const eyeLookInLeft = getScore('eyeLookInLeft');
                   const eyeLookInRight = getScore('eyeLookInRight');
                   
-                  // Eyes looking down at lap (both eyes looking down strongly)
+                  let eyeDown = false;
+                  let eyeSide = false;
+                  
+                  // Eyes looking down at lap
                   if (eyeLookDownLeft > 0.5 && eyeLookDownRight > 0.5) {
-                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down', scores: { eyeLookDownLeft, eyeLookDownRight } });
-                    onWarning('⚠ Your eyes are looking down! Please keep your eyes on the screen.');
+                    eyeDown = true;
                   }
                   
-                  // Eyes looking sideways (looking left: both eyes shift left)
-                  if (eyeLookOutLeft > 0.6 && eyeLookInRight > 0.6) {
-                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_left', scores: { eyeLookOutLeft, eyeLookInRight } });
-                    onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                  // Eyes looking sideways (left or right)
+                  if ((eyeLookOutLeft > 0.6 && eyeLookInRight > 0.6) || (eyeLookOutRight > 0.6 && eyeLookInLeft > 0.6)) {
+                    eyeSide = true;
                   }
                   
-                  // Eyes looking sideways (looking right: both eyes shift right)
-                  if (eyeLookOutRight > 0.6 && eyeLookInLeft > 0.6) {
-                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_right', scores: { eyeLookOutRight, eyeLookInLeft } });
-                    onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                  // Temporal fusion for eye gaze down
+                  if (eyeDown) {
+                    eyeGazeDownCounter++;
+                    if (eyeGazeDownCounter >= TEMPORAL_THRESHOLD) {
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down' });
+                      onWarning('⚠ Your eyes are looking down! Please keep your eyes on the screen.');
+                      eyeGazeDownCounter = 0;
+                    }
+                  } else {
+                    eyeGazeDownCounter = 0;
+                  }
+                  
+                  // Temporal fusion for eye gaze sideways
+                  if (eyeSide) {
+                    eyeGazeSideCounter++;
+                    if (eyeGazeSideCounter >= TEMPORAL_THRESHOLD) {
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_sideways' });
+                      onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                      eyeGazeSideCounter = 0;
+                    }
+                  } else {
+                    eyeGazeSideCounter = 0;
                   }
                 }
               } catch (e) {
-                // FaceLandmarker is optional enhancement - don't break if it fails
                 console.error("FaceLandmarker error:", e);
               }
             }
