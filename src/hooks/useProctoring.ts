@@ -372,6 +372,7 @@ export function useProctoring(
               try {
                 const faces = await faceDetector.estimateFaces(videoRef.current, false);
                 if (faces.length > 0) {
+                  const face = faces[0];
                   // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
                   const rightEye = face.landmarks[0];
                   const leftEye = face.landmarks[1];
