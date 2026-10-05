@@ -135,7 +135,7 @@ export default function QuizControlPage() {
       .eq('id', quiz.id);
 
     if (error) {
-      setToast({ message: 'Failed to save settings', type: 'error' });
+      setToast({ message: `Failed to save: ${error.message}`, type: 'error' });
     } else {
       setToast({ message: 'Settings saved', type: 'success' });
       await logAction('Changed settings', 'quiz', quiz.id, form);
