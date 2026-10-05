@@ -372,20 +372,31 @@ export function useProctoring(
               try {
                 const faces = await faceDetector.estimateFaces(videoRef.current, false);
                 if (faces.length > 0) {
-                  const face = faces[0];
                   // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
+                  const rightEye = face.landmarks[0];
+                  const leftEye = face.landmarks[1];
                   const nose = face.landmarks[2];
                   const mouth = face.landmarks[3];
                   
                   const faceHeight = face.bottomRight[1] - face.topLeft[1];
                   const noseMouthDist = mouth[1] - nose[1];
                   
-                  // When a person tilts their head down to look at their lap, their chin recedes away from the camera.
-                  // This causes the nose to vertically overlap or get extremely close to the mouth in the 2D projection.
-                  // If the nose-to-mouth distance shrinks to less than 7% of the face height (or goes negative), they are looking down.
+                  // 1. Looking Down (Pitch)
                   if (noseMouthDist < faceHeight * 0.07) {
                     recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
                     onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
+                  }
+                  
+                  // 2. Looking Left/Right (Yaw)
+                  // When a person turns their head, their nose visually moves toward one of their eyes.
+                  const eyeDistX = Math.abs(rightEye[0] - leftEye[0]);
+                  const noseToRightEyeX = Math.abs(nose[0] - rightEye[0]);
+                  const noseToLeftEyeX = Math.abs(nose[0] - leftEye[0]);
+                  
+                  // If the nose is horizontally very close to either eye (less than 20% of the distance between eyes)
+                  if (noseToRightEyeX < eyeDistX * 0.2 || noseToLeftEyeX < eyeDistX * 0.2) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
+                    onWarning('⚠ Please face the screen. Looking away from the quiz is not permitted.');
                   }
                 }
               } catch (e) {
