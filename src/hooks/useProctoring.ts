@@ -30,24 +30,20 @@ async function getCocoSsd(): Promise<any> {
   return cocoSsdPromise;
 }
 
-// Load FaceMesh for true eye/iris tracking
-let faceMeshPromise: Promise<any> | null = null;
-async function getFaceMesh(): Promise<any> {
-  if (!faceMeshPromise) {
-    faceMeshPromise = new Promise((resolve, reject) => {
+// Load Blazeface for head pose / gaze tracking
+let blazefacePromise: Promise<any> | null = null;
+async function getBlazeface(): Promise<any> {
+  if (!blazefacePromise) {
+    blazefacePromise = new Promise((resolve, reject) => {
       if (!(window as any).tf) {
         reject(new Error('TF not loaded'));
         return;
       }
       const script = document.createElement('script');
-      // Using Face Landmarks Detection v0.0.3 (older but perfectly stable for TF 4.20 without mediapipe WASM hell)
-      script.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@0.0.3/dist/face-landmarks-detection.min.js';
+      script.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js';
       script.onload = async () => {
         try {
-          const model = await (window as any).faceLandmarksDetection.load(
-            (window as any).faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
-            { maxFaces: 1 }
-          );
+          const model = await (window as any).blazeface.load();
           resolve(model);
         } catch (e) { reject(e); }
       };
@@ -55,7 +51,7 @@ async function getFaceMesh(): Promise<any> {
       document.head.appendChild(script);
     });
   }
-  return faceMeshPromise;
+  return blazefacePromise;
 }
 
 const DEBOUNCE_MS = 5000; // 5 seconds between same-type violations
@@ -273,9 +269,9 @@ export function useProctoring(
         let detector: any = null;
         getCocoSsd().then(m => { detector = m; }).catch(() => { /* silently skip if fails */ });
 
-        // Try to load FaceMesh for true eye tracking (non-blocking)
+        // Try to load Blazeface for gaze/head pose tracking (non-blocking)
         let faceDetector: any = null;
-        getFaceMesh().then(m => { faceDetector = m; }).catch((e) => { console.error('FaceMesh failed:', e); });
+        getBlazeface().then(m => { faceDetector = m; }).catch((e) => { console.error('Blazeface failed:', e); });
 
         // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
@@ -371,63 +367,39 @@ export function useProctoring(
               }
             }
 
-            // --- True Eye Gaze & Head Tracking via FaceMesh ---
+            // --- Head Pose Tracking via Blazeface ---
             if (faceDetector && videoRef.current) {
               try {
-                // FaceMesh v0.0.3 expects { input: HTMLVideoElement }
-                const faces = await faceDetector.estimateFaces({ input: videoRef.current });
+                const faces = await faceDetector.estimateFaces(videoRef.current, false);
                 if (faces.length > 0) {
                   const face = faces[0];
+                  // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
+                  const rightEye = face.landmarks[0];
+                  const leftEye = face.landmarks[1];
+                  const nose = face.landmarks[2];
+                  const mouth = face.landmarks[3];
                   
-                  // annotations contains grouped landmarks
-                  if (face.annotations) {
-                    const leftEyeLower = face.annotations.leftEyeLower0;
-                    const leftEyeUpper = face.annotations.leftEyeUpper0;
-                    const rightEyeLower = face.annotations.rightEyeLower0;
-                    const rightEyeUpper = face.annotations.rightEyeUpper0;
-                    
-                    const silhouette = face.annotations.silhouette;
-                    
-                    if (leftEyeLower && leftEyeUpper && rightEyeLower && rightEyeUpper && silhouette) {
-                      
-                      // 1. Calculate Head Turn (Yaw) using the silhouette edges vs nose
-                      // The tip of the nose is roughly in the center of the annotations.noseTip
-                      const noseTip = face.annotations.noseTip?.[0];
-                      if (noseTip) {
-                        const leftEdge = silhouette[0]; // roughly left edge of face
-                        const rightEdge = silhouette[Math.floor(silhouette.length / 2)]; // roughly right edge
-                        
-                        const faceWidth = Math.abs(rightEdge[0] - leftEdge[0]);
-                        const noseToLeft = Math.abs(noseTip[0] - leftEdge[0]);
-                        const noseToRight = Math.abs(noseTip[0] - rightEdge[0]);
-                        
-                        // If nose is extremely close to one edge of the silhouette, head is turned far away
-                        if (noseToLeft < faceWidth * 0.15 || noseToRight < faceWidth * 0.15) {
-                           recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
-                           onWarning('⚠ Please face the screen. Looking away from the quiz is not permitted.');
-                        }
-                      }
-
-                      // 2. Eye Gaze (Pitch - Looking down)
-                      // If the distance between the upper and lower eyelid shrinks to almost zero, they are looking down/closing eyes
-                      const leftEyeHeight = Math.abs(leftEyeLower[Math.floor(leftEyeLower.length/2)][1] - leftEyeUpper[Math.floor(leftEyeUpper.length/2)][1]);
-                      const rightEyeHeight = Math.abs(rightEyeLower[Math.floor(rightEyeLower.length/2)][1] - rightEyeUpper[Math.floor(rightEyeUpper.length/2)][1]);
-                      
-                      // Face height proxy from silhouette
-                      const topEdge = silhouette[Math.floor(silhouette.length * 0.25)];
-                      const bottomEdge = silhouette[Math.floor(silhouette.length * 0.75)];
-                      const faceHeight = Math.abs(bottomEdge[1] - topEdge[1]);
-                      
-                      // If the eye opening is incredibly small compared to the face size (squinting down or eyes closed)
-                      if (leftEyeHeight < faceHeight * 0.015 && rightEyeHeight < faceHeight * 0.015) {
-                         recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
-                         onWarning('⚠ Please keep your eyes up on the screen. Looking down at your lap is not permitted.');
-                      }
-                    }
+                  const faceHeight = face.bottomRight[1] - face.topLeft[1];
+                  const noseMouthDist = mouth[1] - nose[1];
+                  
+                  // 1. Looking Down (Pitch)
+                  if (noseMouthDist < faceHeight * 0.07) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
+                    onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
+                  }
+                  
+                  // 2. Looking Left/Right (Yaw)
+                  const eyeDistX = Math.abs(rightEye[0] - leftEye[0]);
+                  const noseToRightEyeX = Math.abs(nose[0] - rightEye[0]);
+                  const noseToLeftEyeX = Math.abs(nose[0] - leftEye[0]);
+                  
+                  if (noseToRightEyeX < eyeDistX * 0.2 || noseToLeftEyeX < eyeDistX * 0.2) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
+                    onWarning('⚠ Please face the screen. Looking away from the quiz is not permitted.');
                   }
                 }
               } catch (e) {
-                console.error("FaceMesh Detection error:", e);
+                console.error("Blazeface Detection error:", e);
               }
             }
           }
