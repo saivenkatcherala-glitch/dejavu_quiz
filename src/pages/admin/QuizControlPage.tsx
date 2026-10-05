@@ -140,7 +140,7 @@ export default function QuizControlPage() {
       setToast({ message: 'Settings saved', type: 'success' });
       await logAction('Changed settings', 'quiz', quiz.id, form);
       setEditMode(false);
-      if (selectedQuizId) loadQuizDetails(selectedQuizId);
+      loadQuizzes();
     }
     setSaving(false);
   }
@@ -159,7 +159,7 @@ export default function QuizControlPage() {
     } else {
       setToast({ message: `Quiz is now ${newStatus}`, type: 'success' });
       await logAction(`${newStatus === 'LIVE' ? 'Started' : newStatus === 'PAUSED' ? 'Paused' : newStatus === 'CLOSED' ? 'Closed' : 'Updated'} quiz`, 'quiz', quiz.id);
-      if (selectedQuizId) loadQuizDetails(selectedQuizId);
+      loadQuizzes();
     }
     setSaving(false);
     setConfirm(null);
