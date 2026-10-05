@@ -374,19 +374,16 @@ export function useProctoring(
                 if (faces.length > 0) {
                   const face = faces[0];
                   // Landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
-                  const rightEye = face.landmarks[0];
-                  const leftEye = face.landmarks[1];
-                  const rightEar = face.landmarks[4];
-                  const leftEar = face.landmarks[5];
+                  const nose = face.landmarks[2];
+                  const mouth = face.landmarks[3];
                   
-                  const avgEyeY = (rightEye[1] + leftEye[1]) / 2;
-                  const avgEarY = (rightEar[1] + leftEar[1]) / 2;
                   const faceHeight = face.bottomRight[1] - face.topLeft[1];
+                  const noseMouthDist = mouth[1] - nose[1];
                   
-                  // When you look down, your ears pivot UP relative to your eyes.
-                  // Y-coordinates increase as you go down. So if ears have a much smaller Y than eyes, head is tilted down.
-                  // We require the ears to be higher than the eyes by at least 15% of the face height.
-                  if (avgEarY < avgEyeY - (faceHeight * 0.15)) {
+                  // When a person tilts their head down to look at their lap, their chin recedes away from the camera.
+                  // This causes the nose to vertically overlap or get extremely close to the mouth in the 2D projection.
+                  // If the nose-to-mouth distance shrinks to less than 7% of the face height (or goes negative), they are looking down.
+                  if (noseMouthDist < faceHeight * 0.07) {
                     recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
                     onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
                   }
