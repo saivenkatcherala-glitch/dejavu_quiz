@@ -325,7 +325,8 @@ export function useProctoring(
             } else if (samePixelCount > sampleCount * 0.95) {
               noFaceCounter++;
               if (noFaceCounter >= NO_FACE_THRESHOLD) {
-                recordViolation('CAMERA_DISABLED', 'medium', { reason: 'frozen_frame' });
+                recordViolation('CAMERA_DISABLED', 'medium', { reason: 'camera_covered_solid' });
+                onWarning('Camera appears to be covered or disabled!');
                 noFaceCounter = 0;
               }
             } else {
