@@ -54,6 +54,60 @@ async function getBlazeface(): Promise<any> {
   return blazefacePromise;
 }
 
+// Load MediaPipe Vision FaceLandmarker for true iris/eye gaze tracking (runs on WASM, separate from TF.js)
+let faceLandmarkerPromise: Promise<any> | null = null;
+async function getFaceLandmarker(): Promise<any> {
+  if (!faceLandmarkerPromise) {
+    faceLandmarkerPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.textContent = `
+        import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
+        window.__mediapipeVision = vision;
+        window.dispatchEvent(new Event('mediapipe-vision-loaded'));
+      `;
+      
+      const onLoaded = async () => {
+        window.removeEventListener('mediapipe-vision-loaded', onLoaded);
+        try {
+          const vision = (window as any).__mediapipeVision;
+          const { FaceLandmarker, FilesetResolver } = vision;
+          
+          const filesetResolver = await FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+          );
+          
+          const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+              delegate: 'GPU',
+            },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+            outputFaceBlendshapes: true,
+          });
+          
+          resolve(landmarker);
+        } catch (e) {
+          console.error('FaceLandmarker init failed:', e);
+          reject(e);
+        }
+      };
+      
+      window.addEventListener('mediapipe-vision-loaded', onLoaded);
+      
+      // Timeout fallback if script fails silently
+      setTimeout(() => {
+        window.removeEventListener('mediapipe-vision-loaded', onLoaded);
+        reject(new Error('FaceLandmarker load timeout'));
+      }, 30000);
+      
+      document.head.appendChild(script);
+    });
+  }
+  return faceLandmarkerPromise;
+}
+
 const DEBOUNCE_MS = 5000; // 5 seconds between same-type violations
 
 interface UseProctor {
@@ -269,9 +323,13 @@ export function useProctoring(
         let detector: any = null;
         getCocoSsd().then(m => { detector = m; }).catch(() => { /* silently skip if fails */ });
 
-        // Try to load Blazeface for gaze/head pose tracking (non-blocking)
+        // Try to load Blazeface for head pose tracking (non-blocking)
         let faceDetector: any = null;
         getBlazeface().then(m => { faceDetector = m; }).catch((e) => { console.error('Blazeface failed:', e); });
+
+        // Try to load MediaPipe FaceLandmarker for iris/eye gaze tracking (non-blocking)
+        let irisDetector: any = null;
+        getFaceLandmarker().then(m => { irisDetector = m; }).catch((e) => { console.error('FaceLandmarker failed:', e); });
 
         // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
@@ -400,6 +458,52 @@ export function useProctoring(
                 }
               } catch (e) {
                 console.error("Blazeface Detection error:", e);
+              }
+            }
+
+            // --- True Eye/Iris Gaze Tracking via MediaPipe FaceLandmarker ---
+            if (irisDetector && videoRef.current && !videoRef.current.paused) {
+              try {
+                const nowMs = performance.now();
+                const result = irisDetector.detectForVideo(videoRef.current, nowMs);
+                
+                if (result && result.faceBlendshapes && result.faceBlendshapes.length > 0) {
+                  const blendshapes = result.faceBlendshapes[0].categories;
+                  
+                  // Extract key blendshape scores
+                  const getScore = (name: string) => {
+                    const shape = blendshapes.find((b: any) => b.categoryName === name);
+                    return shape ? shape.score : 0;
+                  };
+                  
+                  const eyeLookDownLeft = getScore('eyeLookDownLeft');
+                  const eyeLookDownRight = getScore('eyeLookDownRight');
+                  const eyeLookOutLeft = getScore('eyeLookOutLeft');
+                  const eyeLookOutRight = getScore('eyeLookOutRight');
+                  const eyeLookInLeft = getScore('eyeLookInLeft');
+                  const eyeLookInRight = getScore('eyeLookInRight');
+                  
+                  // Eyes looking down at lap (both eyes looking down strongly)
+                  if (eyeLookDownLeft > 0.5 && eyeLookDownRight > 0.5) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down', scores: { eyeLookDownLeft, eyeLookDownRight } });
+                    onWarning('⚠ Your eyes are looking down! Please keep your eyes on the screen.');
+                  }
+                  
+                  // Eyes looking sideways (looking left: both eyes shift left)
+                  if (eyeLookOutLeft > 0.6 && eyeLookInRight > 0.6) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_left', scores: { eyeLookOutLeft, eyeLookInRight } });
+                    onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                  }
+                  
+                  // Eyes looking sideways (looking right: both eyes shift right)
+                  if (eyeLookOutRight > 0.6 && eyeLookInLeft > 0.6) {
+                    recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_right', scores: { eyeLookOutRight, eyeLookInLeft } });
+                    onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                  }
+                }
+              } catch (e) {
+                // FaceLandmarker is optional enhancement - don't break if it fails
+                console.error("FaceLandmarker error:", e);
               }
             }
           }
