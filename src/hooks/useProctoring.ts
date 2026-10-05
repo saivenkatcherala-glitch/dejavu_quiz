@@ -289,13 +289,16 @@ export function useProctoring(
             return;
           }
 
+          const vWidth = videoRef.current.videoWidth || 640;
+          const vHeight = videoRef.current.videoHeight || 480;
+
           const canvas = document.createElement('canvas');
-          canvas.width = 1280;
-          canvas.height = 720;
+          canvas.width = vWidth;
+          canvas.height = vHeight;
           const ctx = canvas.getContext('2d');
           if (ctx) {
-            ctx.drawImage(videoRef.current, 0, 0, 1280, 720);
-            const imageData = ctx.getImageData(0, 0, 1280, 720);
+            ctx.drawImage(videoRef.current, 0, 0, vWidth, vHeight);
+            const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
             const data = imageData.data;
 
             let totalBrightness = 0;
