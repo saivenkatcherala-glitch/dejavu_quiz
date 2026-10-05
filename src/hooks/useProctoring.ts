@@ -376,9 +376,11 @@ export function useProctoring(
                   
                   // Y-coordinate increases as you go down the screen.
                   const avgEyeY = (rightEye[1] + leftEye[1]) / 2;
+                  const faceHeight = face.bottomRight[1] - face.topLeft[1];
+                  const eyeNoseDistance = nose[1] - avgEyeY;
                   
-                  // If the nose is vertically higher than the eyes (or very close), head is heavily tilted down
-                  if (nose[1] <= avgEyeY + 15) {
+                  // If the vertical distance between eyes and nose is unusually small compared to face size, head is tilted down
+                  if (eyeNoseDistance < faceHeight * 0.15) {
                     recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
                     onWarning('⚠ Please look up at the screen. Looking down at your lap is not permitted.');
                   }
