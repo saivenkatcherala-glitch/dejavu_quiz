@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@mediapipe/face_detection": "^0.4.1646425229",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@supabase/supabase-js": "^2.117.2",
     "@vitejs/plugin-react": "^6.1.1",
     "idb-keyval": "^6.3.0",

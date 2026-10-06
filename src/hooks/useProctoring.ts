@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { ViolationType, Severity } from '@/lib/types';
+import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 // Load TF.js + COCO-SSD from CDN (no npm install needed)
 let cocoSsdPromise: Promise<any> | null = null;
@@ -30,80 +31,26 @@ async function getCocoSsd(): Promise<any> {
   return cocoSsdPromise;
 }
 
-// Load Blazeface for head pose / gaze tracking
-let blazefacePromise: Promise<any> | null = null;
-async function getBlazeface(): Promise<any> {
-  if (!blazefacePromise) {
-    blazefacePromise = new Promise((resolve, reject) => {
-      if (!(window as any).tf) {
-        reject(new Error('TF not loaded'));
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js';
-      script.onload = async () => {
-        try {
-          const model = await (window as any).blazeface.load();
-          resolve(model);
-        } catch (e) { reject(e); }
-      };
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-  }
-  return blazefacePromise;
-}
-
-// Load MediaPipe Vision FaceLandmarker for true iris/eye gaze tracking (runs on WASM, separate from TF.js)
-let faceLandmarkerPromise: Promise<any> | null = null;
-async function getFaceLandmarker(): Promise<any> {
+// Load MediaPipe FaceLandmarker via npm package (handles eye gaze + head pose)
+let faceLandmarkerPromise: Promise<FaceLandmarker> | null = null;
+async function getFaceLandmarker(): Promise<FaceLandmarker> {
   if (!faceLandmarkerPromise) {
-    faceLandmarkerPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.type = 'module';
-      script.textContent = `
-        import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
-        window.__mediapipeVision = vision;
-        window.dispatchEvent(new Event('mediapipe-vision-loaded'));
-      `;
-      
-      const onLoaded = async () => {
-        window.removeEventListener('mediapipe-vision-loaded', onLoaded);
-        try {
-          const vision = (window as any).__mediapipeVision;
-          const { FaceLandmarker, FilesetResolver } = vision;
-          
-          const filesetResolver = await FilesetResolver.forVisionTasks(
-            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-          );
-          
-          const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-            baseOptions: {
-              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-              delegate: 'GPU',
-            },
-            runningMode: 'VIDEO',
-            numFaces: 1,
-            outputFaceBlendshapes: true,
-          });
-          
-          resolve(landmarker);
-        } catch (e) {
-          console.error('FaceLandmarker init failed:', e);
-          reject(e);
-        }
-      };
-      
-      window.addEventListener('mediapipe-vision-loaded', onLoaded);
-      
-      // Timeout fallback if script fails silently
-      setTimeout(() => {
-        window.removeEventListener('mediapipe-vision-loaded', onLoaded);
-        reject(new Error('FaceLandmarker load timeout'));
-      }, 30000);
-      
-      document.head.appendChild(script);
-    });
+    faceLandmarkerPromise = (async () => {
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+      );
+      const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+        outputFaceBlendshapes: true,
+      });
+      console.log('✅ MediaPipe FaceLandmarker loaded successfully');
+      return landmarker;
+    })();
   }
   return faceLandmarkerPromise;
 }
@@ -323,13 +270,9 @@ export function useProctoring(
         let detector: any = null;
         getCocoSsd().then(m => { detector = m; }).catch(() => { /* silently skip if fails */ });
 
-        // Try to load Blazeface for head pose tracking (non-blocking)
-        let faceDetector: any = null;
-        getBlazeface().then(m => { faceDetector = m; }).catch((e) => { console.error('Blazeface failed:', e); });
-
-        // Try to load MediaPipe FaceLandmarker for iris/eye gaze tracking (non-blocking)
-        let irisDetector: any = null;
-        getFaceLandmarker().then(m => { irisDetector = m; }).catch((e) => { console.error('FaceLandmarker failed:', e); });
+        // Load MediaPipe FaceLandmarker for eye gaze + head pose tracking (non-blocking)
+        let faceTracker: FaceLandmarker | null = null;
+        getFaceLandmarker().then(m => { faceTracker = m; console.log('✅ FaceTracker ready'); }).catch((e) => { console.error('❌ FaceLandmarker failed:', e); });
 
         // Simple face detection using Canvas + basic checks
         let noFaceCounter = 0;
@@ -432,61 +375,11 @@ export function useProctoring(
               }
             }
 
-            // --- Head Pose Tracking via Blazeface ---
-            if (faceDetector && videoRef.current) {
-              try {
-                const faces = await faceDetector.estimateFaces(videoRef.current, false);
-                if (faces.length > 0) {
-                  const face = faces[0];
-                  const rightEye = face.landmarks[0];
-                  const leftEye = face.landmarks[1];
-                  const nose = face.landmarks[2];
-                  const mouth = face.landmarks[3];
-                  
-                  const faceHeight = face.bottomRight[1] - face.topLeft[1];
-                  const noseMouthDist = mouth[1] - nose[1];
-                  
-                  // 1. Looking Down (Pitch) - with temporal fusion
-                  if (noseMouthDist < faceHeight * 0.07) {
-                    gazeDownCounter++;
-                    if (gazeDownCounter >= TEMPORAL_THRESHOLD) {
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_gaze_down' });
-                      onWarning('⚠ Head tilt detected! Please look up at the screen.');
-                      gazeDownCounter = 0;
-                    }
-                  } else {
-                    gazeDownCounter = 0;
-                  }
-                  
-                  // 2. Looking Left/Right (Yaw) - with temporal fusion
-                  const eyeDistX = Math.abs(rightEye[0] - leftEye[0]);
-                  const noseToRightEyeX = Math.abs(nose[0] - rightEye[0]);
-                  const noseToLeftEyeX = Math.abs(nose[0] - leftEye[0]);
-                  
-                  if (noseToRightEyeX < eyeDistX * 0.2 || noseToLeftEyeX < eyeDistX * 0.2) {
-                    headTurnCounter++;
-                    if (headTurnCounter >= TEMPORAL_THRESHOLD) {
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'suspicious_head_turn' });
-                      onWarning('⚠ Head turn detected! Please face the screen.');
-                      headTurnCounter = 0;
-                    }
-                  } else {
-                    headTurnCounter = 0;
-                  }
-                } else {
-                  gazeDownCounter = 0;
-                  headTurnCounter = 0;
-                }
-              } catch (e) {
-                console.error("Blazeface Detection error:", e);
-              }
-            }
-
-            // --- True Eye/Iris Gaze Tracking via MediaPipe FaceLandmarker ---
-            if (irisDetector && videoRef.current && !videoRef.current.paused) {
+            // --- Eye Gaze + Head Pose via MediaPipe FaceLandmarker ---
+            if (faceTracker && videoRef.current && !videoRef.current.paused) {
               try {
                 const nowMs = performance.now();
-                const result = irisDetector.detectForVideo(videoRef.current, nowMs);
+                const result = faceTracker.detectForVideo(videoRef.current, nowMs);
                 
                 if (result && result.faceBlendshapes && result.faceBlendshapes.length > 0) {
                   const blendshapes = result.faceBlendshapes[0].categories;
@@ -496,49 +389,87 @@ export function useProctoring(
                     return shape ? shape.score : 0;
                   };
                   
+                  // Eye gaze scores
                   const eyeLookDownLeft = getScore('eyeLookDownLeft');
                   const eyeLookDownRight = getScore('eyeLookDownRight');
                   const eyeLookOutLeft = getScore('eyeLookOutLeft');
                   const eyeLookOutRight = getScore('eyeLookOutRight');
                   const eyeLookInLeft = getScore('eyeLookInLeft');
                   const eyeLookInRight = getScore('eyeLookInRight');
+                  const eyeLookUpLeft = getScore('eyeLookUpLeft');
+                  const eyeLookUpRight = getScore('eyeLookUpRight');
                   
-                  let eyeDown = false;
-                  let eyeSide = false;
+                  // Head pose scores (jaw movements indicate head rotation)
+                  const jawOpen = getScore('jawOpen');
+                  const jawLeft = getScore('jawLeft');
+                  const jawRight = getScore('jawRight');
+                  const headYawLeft = getScore('headYawLeft') || jawLeft;
+                  const headYawRight = getScore('headYawRight') || jawRight;
                   
-                  // Eyes looking down at lap
-                  if (eyeLookDownLeft > 0.5 && eyeLookDownRight > 0.5) {
-                    eyeDown = true;
-                  }
-                  
-                  // Eyes looking sideways (left or right)
-                  if ((eyeLookOutLeft > 0.6 && eyeLookInRight > 0.6) || (eyeLookOutRight > 0.6 && eyeLookInLeft > 0.6)) {
-                    eyeSide = true;
-                  }
-                  
-                  // Temporal fusion for eye gaze down
-                  if (eyeDown) {
-                    eyeGazeDownCounter++;
-                    if (eyeGazeDownCounter >= TEMPORAL_THRESHOLD) {
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down' });
+                  // === 1. Eye Gaze Down (looking at lap/phone) ===
+                  const eyeDownAvg = (eyeLookDownLeft + eyeLookDownRight) / 2;
+                  if (eyeDownAvg > 0.35) {
+                    gazeDownCounter++;
+                    if (gazeDownCounter >= TEMPORAL_THRESHOLD) {
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down', score: eyeDownAvg });
                       onWarning('⚠ Your eyes are looking down! Please keep your eyes on the screen.');
-                      eyeGazeDownCounter = 0;
+                      gazeDownCounter = 0;
                     }
                   } else {
-                    eyeGazeDownCounter = 0;
+                    gazeDownCounter = 0;
                   }
                   
-                  // Temporal fusion for eye gaze sideways
-                  if (eyeSide) {
+                  // === 2. Eye Gaze Sideways (looking left/right) ===
+                  const lookingLeft = (eyeLookOutLeft + eyeLookInRight) / 2;
+                  const lookingRight = (eyeLookOutRight + eyeLookInLeft) / 2;
+                  
+                  if (lookingLeft > 0.45 || lookingRight > 0.45) {
                     eyeGazeSideCounter++;
                     if (eyeGazeSideCounter >= TEMPORAL_THRESHOLD) {
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_sideways' });
+                      const direction = lookingLeft > lookingRight ? 'left' : 'right';
+                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_sideways', direction, score: Math.max(lookingLeft, lookingRight) });
                       onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
                       eyeGazeSideCounter = 0;
                     }
                   } else {
                     eyeGazeSideCounter = 0;
                   }
+                  
+                  // === 3. Head Turn Detection (using face landmarks positions) ===
+                  if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+                    const landmarks = result.faceLandmarks[0];
+                    // Nose tip = landmark 1, Left ear = landmark 234, Right ear = landmark 454
+                    const noseTip = landmarks[1];
+                    const leftCheek = landmarks[234];
+                    const rightCheek = landmarks[454];
+                    
+                    if (noseTip && leftCheek && rightCheek) {
+                      const faceWidth = Math.abs(rightCheek.x - leftCheek.x);
+                      const noseToLeft = Math.abs(noseTip.x - leftCheek.x);
+                      const noseToRight = Math.abs(noseTip.x - rightCheek.x);
+                      
+                      // Ratio: if nose is much closer to one side, head is turned
+                      const turnRatio = Math.min(noseToLeft, noseToRight) / (faceWidth || 0.001);
+                      
+                      if (turnRatio < 0.15) {
+                        headTurnCounter++;
+                        if (headTurnCounter >= TEMPORAL_THRESHOLD) {
+                          const direction = noseToLeft < noseToRight ? 'right' : 'left';
+                          recordViolation('CAMERA_DISABLED', 'medium', { reason: 'head_turn', direction, turnRatio });
+                          onWarning('⚠ Head turn detected! Please face the screen directly.');
+                          headTurnCounter = 0;
+                        }
+                      } else {
+                        headTurnCounter = 0;
+                      }
+                    }
+                  }
+                  
+                } else {
+                  // No face detected by MediaPipe
+                  gazeDownCounter = 0;
+                  eyeGazeSideCounter = 0;
+                  headTurnCounter = 0;
                 }
               } catch (e) {
                 console.error("FaceLandmarker error:", e);
