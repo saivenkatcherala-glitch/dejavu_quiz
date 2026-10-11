@@ -55,10 +55,11 @@ async function getFaceLandmarker(): Promise<FaceLandmarker> {
   return faceLandmarkerPromise;
 }
 
-const DEBOUNCE_MS = 5000; // 5 seconds between same-type violations
+const DEBOUNCE_MS = 8000; // 8 seconds between same-type violations
 
 interface UseProctor {
   violationCount: number;
+  cameraActive: boolean;
 }
 
 export function useProctoring(
@@ -66,9 +67,12 @@ export function useProctoring(
   teamId: string,
   enabled: boolean,
   onWarning: (message: string) => void,
-  onPhoneDetected?: (count: number) => void
+  onPhoneDetected?: (count: number) => void,
+  externalVideoRef?: React.RefObject<HTMLVideoElement | null>
 ): UseProctor {
   const [violationCount, setViolationCount] = useState(0);
+  const [cameraActive, setCameraActive] = useState(false);
+  const streamRef = useRef<MediaStream | null>(null);
   const phoneDetectionCount = useRef(0);
   const lastViolation = useRef<Map<string, number>>(new Map());
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -233,10 +237,16 @@ export function useProctoring(
     return () => window.removeEventListener('offline', handleOffline);
   }, [enabled, recordViolation]);
 
-  // =====================================================
-  // Face detection using simple camera check
-  // (MediaPipe face detection with fallback)
-  // =====================================================
+  // Keep external video element synced if it mounts after camera starts
+  useEffect(() => {
+    if (externalVideoRef?.current && streamRef.current && externalVideoRef.current.srcObject !== streamRef.current) {
+      externalVideoRef.current.srcObject = streamRef.current;
+      externalVideoRef.current.muted = true;
+      externalVideoRef.current.playsInline = true;
+      externalVideoRef.current.play().catch(() => {});
+      videoRef.current = externalVideoRef.current;
+    }
+  }, [externalVideoRef, cameraActive]);
 
   useEffect(() => {
     if (!enabled || !attemptId) return;
@@ -245,9 +255,13 @@ export function useProctoring(
 
     async function initFaceDetection() {
       try {
-        // Request higher resolution feed (HD) to catch objects further away
+        // Standard 640x480 resolution (100% compatible with laptop webcams without driver crash or shutting down)
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+          video: { 
+            width: { ideal: 640, max: 1280 }, 
+            height: { ideal: 480, max: 720 },
+            facingMode: 'user'
+          }, 
           audio: false 
         });
 
@@ -256,15 +270,27 @@ export function useProctoring(
           return;
         }
 
-        // Create a hidden video element for face detection
-        const video = document.createElement('video');
-        video.width = 1280;
-        video.height = 720;
-        video.srcObject = stream;
-        video.muted = true;
-        video.playsInline = true;
-        await video.play();
-        videoRef.current = video;
+        streamRef.current = stream;
+
+        // Use the DOM-attached video element if provided, otherwise create in-memory
+        if (externalVideoRef?.current) {
+          externalVideoRef.current.srcObject = stream;
+          externalVideoRef.current.muted = true;
+          externalVideoRef.current.playsInline = true;
+          await externalVideoRef.current.play().catch(() => {});
+          videoRef.current = externalVideoRef.current;
+        } else {
+          const video = document.createElement('video');
+          video.width = 640;
+          video.height = 480;
+          video.srcObject = stream;
+          video.muted = true;
+          video.playsInline = true;
+          await video.play().catch(() => {});
+          videoRef.current = video;
+        }
+
+        setCameraActive(true);
 
         // Try to load COCO-SSD for phone detection (non-blocking)
         let detector: any = null;
@@ -274,26 +300,48 @@ export function useProctoring(
         let faceTracker: FaceLandmarker | null = null;
         getFaceLandmarker().then(m => { faceTracker = m; console.log('✅ FaceTracker ready'); }).catch((e) => { console.error('❌ FaceLandmarker failed:', e); });
 
-        // Simple face detection using Canvas + basic checks
+        // Setup counters
         let noFaceCounter = 0;
         let missingPersonCounter = 0;
-        const NO_FACE_THRESHOLD = 3;
+        const NO_FACE_THRESHOLD = 6; // 15 seconds before reporting camera covered/disabled
 
-        // Temporal fusion counters - only fire violation after consecutive detections
+        // Temporal fusion counters - relaxed and softened
         let gazeDownCounter = 0;
         let headTurnCounter = 0;
-        let eyeGazeDownCounter = 0;
         let eyeGazeSideCounter = 0;
-        const TEMPORAL_THRESHOLD = 2; // Must be detected 2 consecutive times (4 seconds at 2s interval)
+        const TEMPORAL_THRESHOLD = 4; // Must persist for 4 consecutive cycles (~10 seconds)
+        const startTime = Date.now();
 
         faceCheckInterval.current = setInterval(async () => {
-          if (!videoRef.current || videoRef.current.paused) {
-            noFaceCounter++;
-            if (noFaceCounter >= NO_FACE_THRESHOLD) {
-              recordViolation('CAMERA_DISABLED', 'high');
-              onWarning('Camera appears to be disabled!');
-              noFaceCounter = 0;
-            }
+          // 1. Auto-resume if video was paused by browser tab management
+          if (videoRef.current?.paused) {
+            videoRef.current.play().catch(() => {});
+          }
+
+          // 2. Check if video track is still live or was muted/ended by laptop OS
+          const activeTrack = streamRef.current?.getVideoTracks()?.[0];
+          if (activeTrack && (!activeTrack.enabled || activeTrack.readyState === 'ended')) {
+            setCameraActive(false);
+            try {
+              const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                audio: false
+              });
+              streamRef.current = newStream;
+              if (videoRef.current) {
+                videoRef.current.srcObject = newStream;
+                videoRef.current.play().catch(() => {});
+              }
+              if (externalVideoRef?.current) {
+                externalVideoRef.current.srcObject = newStream;
+                externalVideoRef.current.play().catch(() => {});
+              }
+              setCameraActive(true);
+            } catch {}
+            return;
+          }
+
+          if (!videoRef.current || videoRef.current.readyState < 2) {
             return;
           }
 
@@ -323,22 +371,26 @@ export function useProctoring(
             const avgBrightness = totalBrightness / (data.length / (4 * 100));
             const sampleCount = Math.floor(data.length / (4 * 100));
 
-            if (avgBrightness < 10) {
-              noFaceCounter++;
-              if (noFaceCounter >= NO_FACE_THRESHOLD) {
-                recordViolation('CAMERA_DISABLED', 'high', { reason: 'black_frame' });
-                onWarning('Camera appears to be covered or disabled!');
+            // Only check black/solid frame after 10-second startup grace period
+            const isStartupPeriod = Date.now() - startTime < 10000;
+            if (!isStartupPeriod) {
+              if (avgBrightness < 6) {
+                noFaceCounter++;
+                if (noFaceCounter >= NO_FACE_THRESHOLD) {
+                  recordViolation('CAMERA_DISABLED', 'high', { reason: 'black_frame' });
+                  onWarning('Camera appears to be covered or disabled!');
+                  noFaceCounter = 0;
+                }
+              } else if (samePixelCount > sampleCount * 0.98) {
+                noFaceCounter++;
+                if (noFaceCounter >= NO_FACE_THRESHOLD) {
+                  recordViolation('CAMERA_DISABLED', 'medium', { reason: 'camera_covered_solid' });
+                  onWarning('Camera appears to be covered or disabled!');
+                  noFaceCounter = 0;
+                }
+              } else {
                 noFaceCounter = 0;
               }
-            } else if (samePixelCount > sampleCount * 0.95) {
-              noFaceCounter++;
-              if (noFaceCounter >= NO_FACE_THRESHOLD) {
-                recordViolation('CAMERA_DISABLED', 'medium', { reason: 'camera_covered_solid' });
-                onWarning('Camera appears to be covered or disabled!');
-                noFaceCounter = 0;
-              }
-            } else {
-              noFaceCounter = 0;
             }
 
             // Mobile phone detection using COCO-SSD (if model loaded)
@@ -346,14 +398,14 @@ export function useProctoring(
               try {
                 const predictions = await detector.detect(canvas);
                 const phoneDetected = predictions.some((p: any) =>
-                  ['cell phone', 'remote', 'book'].includes(p.class) && p.score > 0.35
+                  ['cell phone', 'remote'].includes(p.class) && p.score > 0.45
                 );
                 
                 // Check for missing person (walked away)
                 const personCount = predictions.filter((p: any) => p.class === 'person' && p.score > 0.5).length;
                 if (personCount === 0) {
                   missingPersonCounter++;
-                  if (missingPersonCounter >= 3) { // 6 seconds missing
+                  if (missingPersonCounter >= 4) { // 10 seconds missing
                     recordViolation('CAMERA_DISABLED', 'high', { reason: 'walked_away' });
                     onWarning('⚠ No person detected in camera! Please return to your seat.');
                     missingPersonCounter = 0;
@@ -396,49 +448,41 @@ export function useProctoring(
                   const eyeLookOutRight = getScore('eyeLookOutRight');
                   const eyeLookInLeft = getScore('eyeLookInLeft');
                   const eyeLookInRight = getScore('eyeLookInRight');
-                  const eyeLookUpLeft = getScore('eyeLookUpLeft');
-                  const eyeLookUpRight = getScore('eyeLookUpRight');
                   
-                  // Head pose scores (jaw movements indicate head rotation)
-                  const jawOpen = getScore('jawOpen');
-                  const jawLeft = getScore('jawLeft');
-                  const jawRight = getScore('jawRight');
-                  const headYawLeft = getScore('headYawLeft') || jawLeft;
-                  const headYawRight = getScore('headYawRight') || jawRight;
-                  
-                  // === 1. Eye Gaze Down (looking at lap/phone) ===
+                  // === 1. Eye Gaze Down (looking away at lap/phone) ===
+                  // Normal reading on laptop screen is 0.25 - 0.45. Only looking down toward lap exceeds 0.65.
                   const eyeDownAvg = (eyeLookDownLeft + eyeLookDownRight) / 2;
-                  if (eyeDownAvg > 0.35) {
+                  if (eyeDownAvg > 0.65) {
                     gazeDownCounter++;
                     if (gazeDownCounter >= TEMPORAL_THRESHOLD) {
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_down', score: eyeDownAvg });
-                      onWarning('⚠ Your eyes are looking down! Please keep your eyes on the screen.');
+                      recordViolation('NO_FACE', 'low', { reason: 'eye_gaze_down', score: eyeDownAvg });
+                      onWarning('⚠ Please keep your eyes focused on the screen.');
                       gazeDownCounter = 0;
                     }
                   } else {
                     gazeDownCounter = 0;
                   }
                   
-                  // === 2. Eye Gaze Sideways (looking left/right) ===
+                  // === 2. Eye Gaze Sideways (looking far left/right off-screen) ===
+                  // Normal reading across screen is 0.35 - 0.50. Looking off-screen exceeds 0.65.
                   const lookingLeft = (eyeLookOutLeft + eyeLookInRight) / 2;
                   const lookingRight = (eyeLookOutRight + eyeLookInLeft) / 2;
                   
-                  if (lookingLeft > 0.45 || lookingRight > 0.45) {
+                  if (lookingLeft > 0.65 || lookingRight > 0.65) {
                     eyeGazeSideCounter++;
                     if (eyeGazeSideCounter >= TEMPORAL_THRESHOLD) {
                       const direction = lookingLeft > lookingRight ? 'left' : 'right';
-                      recordViolation('CAMERA_DISABLED', 'medium', { reason: 'eye_gaze_sideways', direction, score: Math.max(lookingLeft, lookingRight) });
-                      onWarning('⚠ Your eyes are looking away! Please keep your eyes on the screen.');
+                      recordViolation('NO_FACE', 'low', { reason: 'eye_gaze_sideways', direction, score: Math.max(lookingLeft, lookingRight) });
+                      onWarning('⚠ Please keep your attention on the quiz screen.');
                       eyeGazeSideCounter = 0;
                     }
                   } else {
                     eyeGazeSideCounter = 0;
                   }
                   
-                  // === 3. Head Turn Detection (using face landmarks positions) ===
+                  // === 3. Head Turn Detection (significant turn > 45 deg) ===
                   if (result.faceLandmarks && result.faceLandmarks.length > 0) {
                     const landmarks = result.faceLandmarks[0];
-                    // Nose tip = landmark 1, Left ear = landmark 234, Right ear = landmark 454
                     const noseTip = landmarks[1];
                     const leftCheek = landmarks[234];
                     const rightCheek = landmarks[454];
@@ -447,15 +491,13 @@ export function useProctoring(
                       const faceWidth = Math.abs(rightCheek.x - leftCheek.x);
                       const noseToLeft = Math.abs(noseTip.x - leftCheek.x);
                       const noseToRight = Math.abs(noseTip.x - rightCheek.x);
-                      
-                      // Ratio: if nose is much closer to one side, head is turned
                       const turnRatio = Math.min(noseToLeft, noseToRight) / (faceWidth || 0.001);
                       
-                      if (turnRatio < 0.15) {
+                      if (turnRatio < 0.10) {
                         headTurnCounter++;
                         if (headTurnCounter >= TEMPORAL_THRESHOLD) {
                           const direction = noseToLeft < noseToRight ? 'right' : 'left';
-                          recordViolation('CAMERA_DISABLED', 'medium', { reason: 'head_turn', direction, turnRatio });
+                          recordViolation('NO_FACE', 'low', { reason: 'head_turn', direction, turnRatio });
                           onWarning('⚠ Head turn detected! Please face the screen directly.');
                           headTurnCounter = 0;
                         }
@@ -476,7 +518,7 @@ export function useProctoring(
               }
             }
           }
-        }, 2000);
+        }, 2500);
       } catch (err) {
         recordViolation('CAMERA_DISABLED', 'high', { reason: 'permission_denied' });
         onWarning('Camera access was denied!');
@@ -488,11 +530,15 @@ export function useProctoring(
     return () => {
       cancelled = true;
       clearInterval(faceCheckInterval.current);
+      setCameraActive(false);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+      }
       if (videoRef.current?.srcObject) {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }
     };
   }, [enabled, attemptId]);
 
-  return { violationCount };
+  return { violationCount, cameraActive };
 }

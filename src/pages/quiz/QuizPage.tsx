@@ -34,8 +34,9 @@ export default function QuizPage() {
 
   // Proctoring
   const [violationPopup, setViolationPopup] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  const { violationCount } = useProctoring(
+  const { violationCount, cameraActive } = useProctoring(
     attemptIdRef.current,
     session?.teamId || '',
     quiz?.proctoring_enabled ?? false,
@@ -47,7 +48,8 @@ export default function QuizPage() {
       if (phoneCount >= 3 && !submitting && !submitted) {
         handleAutoSubmit('phone_detected_twice');
       }
-    }
+    },
+    webcamVideoRef
   );
 
   // Auto-submit if violation limit reached
@@ -511,6 +513,25 @@ export default function QuizPage() {
           >
             Return to Fullscreen
           </Button>
+        </div>
+      )}
+
+      {/* Floating Proctoring Camera Box */}
+      {quiz?.proctoring_enabled && (
+        <div className="fixed bottom-4 right-4 z-40 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-xl shadow-2xl border border-slate-700/60 select-none">
+          <div className="relative w-36 h-24 rounded-lg overflow-hidden bg-slate-950 flex items-center justify-center">
+            <video
+              ref={webcamVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover -scale-x-100"
+            />
+            <div className="absolute top-1 left-1 flex items-center gap-1.5 bg-black/70 backdrop-blur-xs px-2 py-0.5 rounded text-[10px] font-medium text-white pointer-events-none">
+              <span className={`w-1.5 h-1.5 rounded-full ${cameraActive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span>{cameraActive ? 'Camera Live' : 'Starting...'}</span>
+            </div>
+          </div>
         </div>
       )}
 
