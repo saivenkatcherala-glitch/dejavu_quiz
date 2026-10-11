@@ -52,10 +52,12 @@ export default function QuizPage() {
 
   // Auto-submit if violation limit reached
   useEffect(() => {
+    const limit = quiz?.violation_limit ?? 6;
+    const limitEnabled = quiz ? (quiz.violation_limit_enabled ?? true) : false;
     if (
-      quiz?.violation_limit_enabled &&
-      quiz.violation_limit > 0 &&
-      violationCount >= quiz.violation_limit &&
+      limitEnabled &&
+      limit > 0 &&
+      violationCount >= limit &&
       !submitting &&
       !submitted
     ) {
@@ -453,14 +455,14 @@ export default function QuizPage() {
             <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-semibold ${
               violationCount === 0
                 ? 'bg-emerald-100 text-emerald-700'
-                : violationCount < (quiz.violation_limit_enabled ? Math.floor(quiz.violation_limit * 0.7) : 999)
+                : violationCount < ((quiz.violation_limit_enabled ?? true) ? Math.floor((quiz.violation_limit || 6) * 0.7) : 999)
                   ? 'bg-amber-100 text-amber-700'
                   : 'bg-red-100 text-red-700 animate-pulse'
             }`}>
               <AlertTriangle className="w-3.5 h-3.5" />
               {violationCount} violation{violationCount !== 1 ? 's' : ''}
-              {quiz.violation_limit_enabled && (
-                <span className="text-xs opacity-70">/ {quiz.violation_limit}</span>
+              {(quiz.violation_limit_enabled ?? true) && (
+                <span className="text-xs opacity-70">/ {quiz.violation_limit || 6}</span>
               )}
             </div>
           )}

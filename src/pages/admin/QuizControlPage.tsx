@@ -30,8 +30,8 @@ export default function QuizControlPage() {
     allow_previous_question: true,
     auto_submit_on_expiry: true,
     proctoring_enabled: true,
-    violation_limit_enabled: false,
-    violation_limit: 3,
+    violation_limit_enabled: true,
+    violation_limit: 6,
   });
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
@@ -79,8 +79,8 @@ export default function QuizControlPage() {
         allow_previous_question: target.allow_previous_question,
         auto_submit_on_expiry: target.auto_submit_on_expiry,
         proctoring_enabled: target.proctoring_enabled,
-        violation_limit_enabled: target.violation_limit_enabled || false,
-        violation_limit: target.violation_limit || 3,
+        violation_limit_enabled: target.violation_limit_enabled ?? true,
+        violation_limit: target.violation_limit || 6,
       });
 
       const { count } = await supabase
